@@ -1,0 +1,26 @@
+# Database and runtime files
+signage.db
+signage.log
+config.json
+
+# Video files
+videos/*.mp4
+videos/*.webm
+videos/*.mov
+
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller
+dist/
+build/
+*.spec
+*.exe
+
+# IDE / OS
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

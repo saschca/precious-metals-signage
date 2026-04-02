@@ -1,0 +1,77 @@
+body {
+    background: #1a1a1a;
+}
+
+.card {
+    border-color: #333;
+}
+
+.card-header {
+    background: #252525;
+    font-weight: 600;
+}
+
+/* Playlist items */
+.playlist-item {
+    cursor: default;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+}
+
+.playlist-item .drag-handle {
+    cursor: grab;
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.playlist-item .drag-handle:active {
+    cursor: grabbing;
+}
+
+.playlist-item .filename {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.playlist-item .btn-remove {
+    opacity: 0.5;
+}
+
+.playlist-item:hover .btn-remove {
+    opacity: 1;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+    background: #2a2a3a;
+}
+
+/* Prices table */
+#prices-table tbody td {
+    font-variant-numeric: tabular-nums;
+}
+
+.price-pos { color: #4CAF50; }
+.price-neg { color: #F44336; }
+
+/* Log box */
+.log-box {
+    font-size: 0.78rem;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Empty playlist */
+.playlist-empty {
+    text-align: center;
+    color: #666;
+    padding: 1.5rem;
+    font-style: italic;
+}

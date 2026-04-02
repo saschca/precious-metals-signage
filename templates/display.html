@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Precious Metals Display</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23FFD700' stroke='%23B8860B' stroke-width='4'/></svg>">
+    <link rel="stylesheet" href="/static/css/display.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div id="splash">
+        <div class="splash-text">No videos loaded</div>
+        <div class="splash-sub">Add videos via the admin panel</div>
+    </div>
+    <video id="player" autoplay></video>
+
+    <div id="chart-overlay">
+        <div id="chart-title"></div>
+        <canvas id="chart-canvas"></canvas>
+    </div>
+
+    <div id="ticker">
+        <div id="ticker-content">
+            <span class="ticker-loading">Prices loading…</span>
+        </div>
+        <div id="ticker-updated"></div>
+    </div>
+
+    <script src="/static/js/display.js"></script>
+</body>
+</html>

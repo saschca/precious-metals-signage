@@ -1,0 +1,171 @@
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    cursor: none;
+}
+
+/* ---------- Video player ---------- */
+#player {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
+}
+
+/* ---------- Splash screen ---------- */
+#splash {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+#splash .splash-text {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 3rem;
+    font-weight: 300;
+    color: #888;
+}
+
+#splash .splash-sub {
+    margin-top: 0.6rem;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 1.2rem;
+    color: #555;
+}
+
+/* ---------- Chart overlay ---------- */
+#chart-overlay {
+    position: absolute;
+    inset: 0;
+    background: #0a0a0a;
+    z-index: 50;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 60px 80px;
+}
+
+#chart-title {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 2.4rem;
+    font-weight: 300;
+    color: #ddd;
+    margin-bottom: 24px;
+    letter-spacing: 0.04em;
+}
+
+#chart-canvas {
+    width: 100% !important;
+    max-height: calc(100vh - 200px);
+}
+
+/* ---------- Price ticker ---------- */
+#ticker {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 60px;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+    font-size: 28px;
+    color: #ccc;
+    overflow: hidden;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#ticker-content {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    white-space: nowrap;
+}
+
+#ticker-updated {
+    flex-shrink: 0;
+    padding: 0 18px;
+    font-size: 14px;
+    color: #666;
+    white-space: nowrap;
+}
+
+/* --- Static mode --- */
+#ticker.mode-static #ticker-content {
+    justify-content: space-around;
+}
+
+.ticker-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3em;
+    padding: 0 12px;
+}
+
+.ticker-item .metal-name {
+    font-weight: 600;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.ticker-item .metal-price {
+    color: #e0e0e0;
+}
+
+.ticker-item .metal-change {
+    font-size: 0.78em;
+}
+
+.ticker-sep {
+    color: #444;
+    padding: 0 4px;
+    user-select: none;
+}
+
+.change-pos { color: #4CAF50; }
+.change-neg { color: #F44336; }
+
+.ticker-loading {
+    width: 100%;
+    text-align: center;
+    color: #666;
+    font-size: 22px;
+    font-style: italic;
+}
+
+/* --- Marquee mode --- */
+@keyframes marquee-scroll {
+    0%   { transform: translateX(100vw); }
+    100% { transform: translateX(-100%); }
+}
+
+#ticker.mode-marquee #ticker-content {
+    display: inline-flex;
+    flex: none;
+    animation: marquee-scroll var(--marquee-duration, 30s) linear infinite;
+    padding-left: 0;
+}
+
+#ticker.mode-marquee #ticker-updated {
+    display: none;
+}
