@@ -15,7 +15,7 @@ METAL_TICKERS = {
     'Platinum':  'PL=F',
     'Palladium': 'PA=F',
 }
-FX_TICKER = 'CADUSD=X'
+FX_TICKERS = ['CADUSD=X', 'EURUSD=X']
 
 # Track consecutive failures for admin warning
 _lock = threading.Lock()
@@ -36,7 +36,7 @@ def fetch_and_store(db_path):
     """
     global _consecutive_failures, _last_error
 
-    all_tickers = list(METAL_TICKERS.values()) + [FX_TICKER]
+    all_tickers = list(METAL_TICKERS.values()) + FX_TICKERS
 
     try:
         data = yf.download(
@@ -51,11 +51,20 @@ def fetch_and_store(db_path):
         if data.empty:
             raise ValueError('yfinance returned empty data')
 
-        # --- Extract USD/CAD rate -------------------------------------------
-        fx_close = data[FX_TICKER]['Close'].dropna()
+        # --- Extract FX rates -----------------------------------------------
+        fx_close = data['CADUSD=X']['Close'].dropna()
         if fx_close.empty:
             raise ValueError('No FX data for CADUSD=X')
         usd_cad = 1.0 / float(fx_close.iloc[-1])
+
+        # EUR rate (non-fatal if unavailable)
+        usd_eur = 0.0
+        try:
+            eur_close = data['EURUSD=X']['Close'].dropna()
+            if not eur_close.empty:
+                usd_eur = 1.0 / float(eur_close.iloc[-1])
+        except Exception:
+            logger.warning('EUR FX data unavailable, EUR prices will be 0')
 
         # --- Extract metal prices -------------------------------------------
         results = []
@@ -74,15 +83,19 @@ def fetch_and_store(db_path):
 
             price_cad = price_usd * usd_cad
             change_cad = change_usd * usd_cad
+            price_eur = price_usd * usd_eur
+            change_eur = change_usd * usd_eur
 
             results.append({
                 'metal': symbol,
                 'name': name,
                 'price_usd': round(price_usd, 2),
                 'price_cad': round(price_cad, 2),
+                'price_eur': round(price_eur, 2),
+                'change_usd': round(change_usd, 2),
                 'change_dollar': round(change_cad, 2),
+                'change_eur': round(change_eur, 2),
                 'change_percent': round(change_pct, 2),
-                'usd_cad_rate': round(usd_cad, 4),
             })
 
         if not results:
@@ -94,10 +107,12 @@ def fetch_and_store(db_path):
         for r in results:
             conn.execute(
                 '''INSERT INTO prices
-                   (metal, price_usd, price_cad, change_dollar, change_percent, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?)''',
-                (r['metal'], r['price_usd'], r['price_cad'],
-                 r['change_dollar'], r['change_percent'], now),
+                   (metal, price_usd, price_cad, price_eur,
+                    change_usd, change_dollar, change_eur, change_percent, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (r['metal'], r['price_usd'], r['price_cad'], r['price_eur'],
+                 r['change_usd'], r['change_dollar'], r['change_eur'],
+                 r['change_percent'], now),
             )
         conn.commit()
 
@@ -115,7 +130,7 @@ def fetch_and_store(db_path):
         logger.info(
             f'Prices updated: '
             + ', '.join(f"{r['name']}=${r['price_cad']:.2f}CAD" for r in results)
-            + f' (USD/CAD={usd_cad:.4f})'
+            + f' (USD/CAD={usd_cad:.4f}, USD/EUR={usd_eur:.4f})'
         )
         return results
 

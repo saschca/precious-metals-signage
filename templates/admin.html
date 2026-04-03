@@ -46,7 +46,9 @@
         <!-- ============================================================ -->
         <div class="col-lg-7">
             <div class="card h-100">
-                <div class="card-header"><i class="bi bi-music-note-list me-2"></i>Playlist</div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-music-note-list me-2"></i>Playlist <span class="badge bg-secondary ms-1" id="playlist-count">0 videos</span></span>
+                </div>
                 <div class="card-body">
                     <ul class="list-group mb-3" id="playlist-list">
                         <!-- populated by JS -->
@@ -57,6 +59,9 @@
                         </select>
                         <button class="btn btn-primary flex-shrink-0" id="btn-add-video">
                             <i class="bi bi-plus-lg"></i> Add
+                        </button>
+                        <button class="btn btn-outline-primary flex-shrink-0" id="btn-add-all-videos">
+                            <i class="bi bi-plus-circle"></i> Add All
                         </button>
                     </div>
                 </div>
@@ -115,6 +120,14 @@
                             </div>
                         </div>
                     </div>
+                    <div class="mb-2">
+                        <label class="form-label" for="set-currency">Display currency</label>
+                        <select class="form-select form-select-sm" id="set-currency">
+                            <option value="CAD">CAD</option>
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                        </select>
+                    </div>
                     <div class="mb-0">
                         <label class="form-label" for="set-update-interval">
                             Price update interval: <strong id="interval-val">1</strong> min
@@ -125,11 +138,42 @@
 
                 <!-- Chart settings -->
                 <div class="col-md-4">
-                    <h6 class="text-muted mb-3">Charts</h6>
-                    <div class="form-check form-switch mb-2">
-                        <input class="form-check-input" type="checkbox" id="set-charts-enabled" checked>
-                        <label class="form-check-label" for="set-charts-enabled">Chart slides enabled</label>
-                    </div>
+                    <h6 class="text-muted mb-3">Chart Slides</h6>
+                    <table class="table table-sm table-dark table-borderless chart-metals-table mb-3" id="chart-metals-table">
+                        <thead>
+                            <tr><th></th><th class="text-center">1W</th><th class="text-center">1M</th><th class="text-center">1Y</th><th class="text-center">10Y</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr data-symbol="GC=F">
+                                <td><div class="form-check form-switch mb-0"><input class="form-check-input chart-metal-toggle" type="checkbox" id="cmt-gold" checked><label class="form-check-label" for="cmt-gold">Gold</label></div></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="5d" checked></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1mo"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1y"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="10y"></td>
+                            </tr>
+                            <tr data-symbol="SI=F">
+                                <td><div class="form-check form-switch mb-0"><input class="form-check-input chart-metal-toggle" type="checkbox" id="cmt-silver" checked><label class="form-check-label" for="cmt-silver">Silver</label></div></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="5d" checked></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1mo"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1y"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="10y"></td>
+                            </tr>
+                            <tr data-symbol="PL=F">
+                                <td><div class="form-check form-switch mb-0"><input class="form-check-input chart-metal-toggle" type="checkbox" id="cmt-plat" checked><label class="form-check-label" for="cmt-plat">Platinum</label></div></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="5d" checked></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1mo"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1y"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="10y"></td>
+                            </tr>
+                            <tr data-symbol="PA=F">
+                                <td><div class="form-check form-switch mb-0"><input class="form-check-input chart-metal-toggle" type="checkbox" id="cmt-pall" checked><label class="form-check-label" for="cmt-pall">Palladium</label></div></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="5d" checked></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1mo"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="1y"></td>
+                                <td class="text-center"><input class="form-check-input chart-period" type="checkbox" data-period="10y"></td>
+                            </tr>
+                        </tbody>
+                    </table>
                     <div class="mb-2">
                         <label class="form-label" for="set-chart-frequency">
                             Show chart every <strong id="freq-val">3</strong> videos
@@ -147,14 +191,15 @@
                 <!-- Display settings -->
                 <div class="col-md-4">
                     <h6 class="text-muted mb-3">Display</h6>
-                    <div class="row g-2 mb-3">
-                        <div class="col-6">
-                            <label class="form-label" for="set-offset-x">Monitor offset X</label>
-                            <input type="number" class="form-control" id="set-offset-x" value="1920">
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label" for="set-offset-y">Monitor offset Y</label>
-                            <input type="number" class="form-control" id="set-offset-y" value="0">
+                    <div class="mb-3">
+                        <label class="form-label" for="set-display-monitor">Launch display on</label>
+                        <div class="d-flex gap-2">
+                            <select class="form-select" id="set-display-monitor">
+                                <option value="0">Detecting monitors...</option>
+                            </select>
+                            <button class="btn btn-outline-secondary flex-shrink-0" id="btn-identify-monitors" title="Flash monitor numbers on screen">
+                                <i class="bi bi-tv"></i> Identify
+                            </button>
                         </div>
                     </div>
                     <button class="btn btn-outline-light w-100 mb-2" id="btn-launch-display">
@@ -176,7 +221,7 @@
         <div class="card-body">
             <div class="row g-3">
                 <div class="col-md-4">
-                    <div class="mb-2"><strong>Version:</strong> <span id="sys-version">—</span> <span class="text-muted">by Alexander@Knecht.com</span></div>
+                    <div class="mb-2"><strong>Version:</strong> <span id="sys-version">—</span> <span class="text-muted">by <a href="https://github.com/saschca/precious-metals-signage" class="text-muted" target="_blank">saschca</a></span></div>
                     <div class="mb-2"><strong>Uptime:</strong> <span id="sys-uptime">—</span></div>
                     <div class="form-check form-switch">
                         <input class="form-check-input" type="checkbox" id="set-auto-start">

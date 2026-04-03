@@ -2,11 +2,14 @@
 signage.db
 signage.log
 config.json
+.signage.lock
+.env
 
 # Video files
 videos/*.mp4
 videos/*.webm
 videos/*.mov
+videos/*.mkv
 
 # Python
 __pycache__/

@@ -118,6 +118,9 @@
     }
 
     function renderPlaylist(items) {
+        var countBadge = document.getElementById("playlist-count");
+        countBadge.textContent = items.length + " video" + (items.length !== 1 ? "s" : "");
+
         if (items.length === 0) {
             playlistList.innerHTML = '<li class="list-group-item playlist-empty">Playlist is empty</li>';
             return;
@@ -194,6 +197,27 @@
                 loadPlaylist();
             })
             .catch(() => showToast("Add failed", "danger"));
+    });
+
+    // Add all videos
+    document.getElementById("btn-add-all-videos").addEventListener("click", function () {
+        var btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Adding...';
+        post("/api/playlist/add-all")
+            .then(function (r) {
+                if (!r.ok) throw new Error();
+                return r.json();
+            })
+            .then(function (data) {
+                showToast("Added " + data.count + " videos", "success");
+                loadPlaylist();
+            })
+            .catch(function () { showToast("Add all failed", "danger"); })
+            .finally(function () {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-plus-circle"></i> Add All';
+            });
     });
 
     function loadAvailableVideos() {
@@ -279,14 +303,14 @@
     // ======================================================================
     // Card 4 — Settings
     // ======================================================================
-    const setTickerEnabled  = document.getElementById("set-ticker-enabled");
-    const setChartsEnabled  = document.getElementById("set-charts-enabled");
-    const setUpdateInterval = document.getElementById("set-update-interval");
-    const setChartFrequency = document.getElementById("set-chart-frequency");
-    const setChartDuration  = document.getElementById("set-chart-duration");
-    const setOffsetX        = document.getElementById("set-offset-x");
-    const setOffsetY        = document.getElementById("set-offset-y");
-    const setAutoStart      = document.getElementById("set-auto-start");
+    const setTickerEnabled   = document.getElementById("set-ticker-enabled");
+    const setCurrency        = document.getElementById("set-currency");
+    const setUpdateInterval  = document.getElementById("set-update-interval");
+    const setChartFrequency  = document.getElementById("set-chart-frequency");
+    const setChartDuration   = document.getElementById("set-chart-duration");
+    const setDisplayMonitor  = document.getElementById("set-display-monitor");
+    const setAutoStart       = document.getElementById("set-auto-start");
+    const chartMetalsTable   = document.getElementById("chart-metals-table");
 
     // Live slider labels
     setUpdateInterval.addEventListener("input", () => {
@@ -297,6 +321,86 @@
     });
     setChartDuration.addEventListener("input", () => {
         document.getElementById("dur-val").textContent = setChartDuration.value;
+    });
+
+    // Chart metals grid: toggle enables/disables period checkboxes per metal
+    chartMetalsTable.addEventListener("change", function (e) {
+        if (e.target.classList.contains("chart-metal-toggle")) {
+            var row = e.target.closest("tr");
+            var cbs = row.querySelectorAll(".chart-period");
+            cbs.forEach(function (cb) { cb.disabled = !e.target.checked; });
+        }
+    });
+
+    function getChartMetalsConfig() {
+        var result = {};
+        chartMetalsTable.querySelectorAll("tbody tr").forEach(function (row) {
+            var symbol = row.dataset.symbol;
+            var toggle = row.querySelector(".chart-metal-toggle");
+            if (!toggle || !toggle.checked) return;
+            var periods = [];
+            row.querySelectorAll(".chart-period:checked").forEach(function (cb) {
+                periods.push(cb.dataset.period);
+            });
+            if (periods.length > 0) result[symbol] = periods;
+        });
+        return JSON.stringify(result);
+    }
+
+    function setChartMetalsConfig(obj) {
+        chartMetalsTable.querySelectorAll("tbody tr").forEach(function (row) {
+            var symbol = row.dataset.symbol;
+            var toggle = row.querySelector(".chart-metal-toggle");
+            var cbs = row.querySelectorAll(".chart-period");
+            var periods = obj[symbol] || [];
+            var isOn = periods.length > 0;
+            toggle.checked = isOn;
+            cbs.forEach(function (cb) {
+                cb.checked = periods.indexOf(cb.dataset.period) !== -1;
+                cb.disabled = !isOn;
+            });
+        });
+    }
+
+    // Monitor picker
+    var savedMonitorIndex = "1"; // will be updated by loadSettings
+
+    function loadMonitors() {
+        fetch("/api/monitors")
+            .then(r => r.json())
+            .then(monitors => {
+                if (monitors.error) {
+                    setDisplayMonitor.innerHTML = '<option value="0">Monitor detection unavailable</option>';
+                    return;
+                }
+                setDisplayMonitor.innerHTML = monitors.map(m =>
+                    '<option value="' + m.index + '">'
+                    + 'Monitor ' + (m.index + 1) + ' — ' + m.width + 'x' + m.height
+                    + ' (' + m.name + ')'
+                    + '</option>'
+                ).join("");
+                setDisplayMonitor.value = savedMonitorIndex;
+            })
+            .catch(() => {
+                setDisplayMonitor.innerHTML = '<option value="0">Could not detect monitors</option>';
+            });
+    }
+
+    document.getElementById("btn-identify-monitors").addEventListener("click", function () {
+        var btn = this;
+        btn.disabled = true;
+        post("/api/monitors/identify")
+            .then(r => {
+                if (!r.ok) throw new Error();
+                return r.json();
+            })
+            .then(data => {
+                showToast("Identifying " + data.count + " monitor(s)...", "info");
+            })
+            .catch(() => showToast("Monitor identify failed", "danger"))
+            .finally(() => {
+                setTimeout(() => { btn.disabled = false; }, 3500);
+            });
     });
 
     function loadSettings() {
@@ -311,10 +415,15 @@
                     document.getElementById("mode-static").checked = true;
                 }
 
+                setCurrency.value = s.currency || "CAD";
+
                 setUpdateInterval.value = s.update_interval || "1";
                 document.getElementById("interval-val").textContent = setUpdateInterval.value;
 
-                setChartsEnabled.checked = s.charts_enabled !== "false";
+                try {
+                    var defaultMetals = '{"GC=F":["5d"],"SI=F":["5d"],"PL=F":["5d"],"PA=F":["5d"]}';
+                    setChartMetalsConfig(JSON.parse(s.chart_metals || defaultMetals));
+                } catch (e) {}
 
                 setChartFrequency.value = s.chart_frequency || "3";
                 document.getElementById("freq-val").textContent = setChartFrequency.value;
@@ -322,8 +431,8 @@
                 setChartDuration.value = s.chart_duration || "15";
                 document.getElementById("dur-val").textContent = setChartDuration.value;
 
-                setOffsetX.value = s.monitor_offset_x || "1920";
-                setOffsetY.value = s.monitor_offset_y || "0";
+                savedMonitorIndex = s.display_monitor || "1";
+                setDisplayMonitor.value = savedMonitorIndex;
 
                 setAutoStart.checked = s.auto_start === "true";
             })
@@ -333,15 +442,15 @@
     document.getElementById("btn-save-settings").addEventListener("click", function () {
         const mode = document.querySelector('input[name="tickerMode"]:checked').value;
         const payload = {
-            ticker_enabled:  setTickerEnabled.checked ? "true" : "false",
-            ticker_mode:     mode,
-            update_interval: setUpdateInterval.value,
-            charts_enabled:  setChartsEnabled.checked ? "true" : "false",
-            chart_frequency: setChartFrequency.value,
-            chart_duration:  setChartDuration.value,
-            monitor_offset_x: setOffsetX.value,
-            monitor_offset_y: setOffsetY.value,
-            auto_start:      setAutoStart.checked ? "true" : "false",
+            ticker_enabled:   setTickerEnabled.checked ? "true" : "false",
+            ticker_mode:      mode,
+            currency:         setCurrency.value,
+            update_interval:  setUpdateInterval.value,
+            chart_metals:     getChartMetalsConfig(),
+            chart_frequency:  setChartFrequency.value,
+            chart_duration:   setChartDuration.value,
+            display_monitor:  setDisplayMonitor.value,
+            auto_start:       setAutoStart.checked ? "true" : "false",
         };
 
         const btn = this;
@@ -369,7 +478,7 @@
         post("/api/launch-display")
             .then(r => {
                 if (!r.ok) throw new Error();
-                showToast("Display launched on Monitor 2", "success");
+                showToast("Display launched on Monitor " + (parseInt(setDisplayMonitor.value, 10) + 1), "success");
                 btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Launched!';
                 setTimeout(() => {
                     btn.innerHTML = '<i class="bi bi-box-arrow-up-right me-1"></i>Launch Display';
@@ -403,6 +512,7 @@
     loadPlaylist();
     loadPrices();
     loadSettings();
+    loadMonitors();
     loadLogs();
     pollStatus();
 

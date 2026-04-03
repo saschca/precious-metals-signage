@@ -11,37 +11,78 @@
     let playlist = [];
     let currentIndex = -1;
     let videoCounter = 0;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 3;
 
     // ---- Chart state ------------------------------------------------------
-    const CHART_METALS = [
-        { symbol: "GC=F", name: "Gold",      color: "#FFD700" },
-        { symbol: "SI=F", name: "Silver",    color: "#C0C0C0" },
-        { symbol: "PL=F", name: "Platinum",  color: "#E5E4E2" },
-        { symbol: "PA=F", name: "Palladium", color: "#CED0DD" },
-    ];
-    let chartMetalIndex = 0;
+    const METAL_INFO = {
+        "GC=F": { name: "Gold",      color: "#FFD700" },
+        "SI=F": { name: "Silver",    color: "#C0C0C0" },
+        "PL=F": { name: "Platinum",  color: "#E5E4E2" },
+        "PA=F": { name: "Palladium", color: "#CED0DD" },
+    };
+    const PERIOD_LABELS = {
+        "5d": "1 Week", "1mo": "1 Month", "1y": "1 Year", "10y": "10 Years",
+    };
+    const METAL_ORDER = ["GC=F", "SI=F", "PL=F", "PA=F"];
+
+    let chartQueue = [];       // [{symbol, name, color, period, periodLabel}]
+    let chartQueueIndex = 0;
     let chartInstance = null;
     let chartDismissTimer = null;
 
-    // Client-side chart data cache: symbol -> {data, time}
+    // Client-side chart data cache: "symbol:period" -> {data, time}
     const chartCache = {};
     const CHART_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
-    // Settings (fetched periodically by ticker IIFE, read here)
-    let chartsEnabled = true;
     let chartFrequency = 3;
     let chartDuration = 15;
+    let displayCurrency = "CAD";
 
     // ---- Settings sync ----------------------------------------------------
     function fetchChartSettings() {
         fetch("/api/settings")
             .then(r => r.json())
             .then(s => {
-                chartsEnabled = s.charts_enabled !== "false";
                 chartFrequency = parseInt(s.chart_frequency, 10) || 3;
                 chartDuration = parseInt(s.chart_duration, 10) || 15;
+                displayCurrency = s.currency || "CAD";
+
+                // Build chart queue from per-metal settings
+                var metals = {};
+                if (s.chart_metals) {
+                    try { metals = JSON.parse(s.chart_metals); } catch (e) {}
+                } else if (s.charts_enabled !== "false") {
+                    // Backward compat: old settings without chart_metals
+                    metals = {"GC=F":["5d"],"SI=F":["5d"],"PL=F":["5d"],"PA=F":["5d"]};
+                }
+
+                var newQueue = [];
+                METAL_ORDER.forEach(function (sym) {
+                    var periods = metals[sym];
+                    if (!periods) return;
+                    var info = METAL_INFO[sym];
+                    periods.forEach(function (p) {
+                        var label = PERIOD_LABELS[p];
+                        if (!label) return;
+                        newQueue.push({
+                            symbol: sym, name: info.name, color: info.color,
+                            period: p, periodLabel: label,
+                        });
+                    });
+                });
+
+                chartQueue = newQueue;
+                console.log("[Charts] Queue:", chartQueue.length, "slide(s)");
             })
             .catch(() => {});
+    }
+
+    // ---- Splash helpers -----------------------------------------------------
+    function showSplash(text, sub) {
+        splash.querySelector(".splash-text").textContent = text;
+        splash.querySelector(".splash-sub").textContent = sub;
+        splash.style.display = "flex";
     }
 
     // ---- Playlist fetching ------------------------------------------------
@@ -49,34 +90,61 @@
         fetch("/api/playlist")
             .then(r => r.json())
             .then(items => {
-                const enabled = items.filter(v => v.enabled);
+                // Filter to enabled videos that still exist on disk
+                const playable = items.filter(v => v.enabled && v.exists !== false);
+                const missing = items.filter(v => v.enabled && v.exists === false);
 
-                if (enabled.length === 0 && playlist.length === 0) {
+                console.log("[Playlist] Total:", items.length,
+                    "| Playable:", playable.length,
+                    "| Missing files:", missing.length,
+                    "| Server state:", serverState);
+                if (missing.length > 0) {
+                    console.warn("[Playlist] Missing video files:",
+                        missing.map(v => v.filename));
+                }
+
+                if (playable.length === 0 && playlist.length === 0) {
+                    // Never had videos — keep showing splash
+                    if (items.length > 0 && missing.length > 0) {
+                        showSplash("Video files missing",
+                            missing.length + " playlist item(s) not found in /videos/");
+                    }
                     return;
                 }
 
-                if (enabled.length === 0) {
+                if (playable.length === 0) {
                     playlist = [];
                     currentIndex = -1;
                     player.pause();
                     player.removeAttribute("src");
                     player.style.display = "none";
-                    splash.style.display = "flex";
+                    if (missing.length > 0) {
+                        showSplash("Video files missing",
+                            missing.length + " playlist item(s) not found in /videos/");
+                    } else {
+                        showSplash("No videos loaded", "Add videos via the admin panel");
+                    }
                     return;
                 }
 
                 const oldNames = playlist.map(v => v.filename).join(",");
-                const newNames = enabled.map(v => v.filename).join(",");
+                const newNames = playable.map(v => v.filename).join(",");
 
-                playlist = enabled;
+                playlist = playable;
 
                 if (currentIndex === -1 && serverState !== "stopped") {
+                    console.log("[Playlist] Starting playback at index 0");
                     currentIndex = 0;
                     playCurrentVideo();
                 } else if (currentIndex === -1) {
                     // Playlist loaded but waiting for play command
+                    console.log("[Playlist] Loaded but state is stopped — waiting for play");
+                    showSplash("Ready", playlist.length + " video(s) — press Play in admin");
                 } else if (oldNames !== newNames) {
-                    const currentFile = player.getAttribute("src")?.split("/").pop();
+                    console.log("[Playlist] Playlist changed, re-syncing index");
+                    const currentFile = player.getAttribute("src")
+                        ? decodeURIComponent(player.getAttribute("src").split("/").pop())
+                        : null;
                     const idx = playlist.findIndex(v => v.filename === currentFile);
                     if (idx !== -1) {
                         currentIndex = idx;
@@ -85,7 +153,9 @@
                     }
                 }
             })
-            .catch(() => {});
+            .catch(err => {
+                console.error("[Playlist] Fetch failed:", err);
+            });
     }
 
     // ---- Admin control state ------------------------------------------------
@@ -108,6 +178,7 @@
                 // Handle skip
                 if (s.skip_counter > lastSkipCounter) {
                     lastSkipCounter = s.skip_counter;
+                    console.log("[Status] Skip detected, counter:", s.skip_counter);
                     if (showingChart) {
                         resumeAfterChart();
                     } else {
@@ -117,21 +188,34 @@
                 }
 
                 // Handle state transitions
+                if (s.state !== serverState) {
+                    console.log("[Status] State change:", serverState, "->", s.state,
+                        "| Playlist:", playlist.length, "| Index:", currentIndex);
+                }
+
                 if (s.state === "stopped" && serverState !== "stopped") {
                     player.pause();
                     player.removeAttribute("src");
                     player.style.display = "none";
                     chartOverlay.style.display = "none";
-                    splash.style.display = "flex";
                     if (chartDismissTimer) {
                         clearTimeout(chartDismissTimer);
                         chartDismissTimer = null;
                     }
+                    if (playlist.length > 0) {
+                        showSplash("Ready", playlist.length + " video(s) — press Play in admin");
+                    } else {
+                        showSplash("No videos loaded", "Add videos via the admin panel");
+                    }
+                    currentIndex = -1;
                     reportVideo(null);
                 } else if (s.state === "playing" && serverState === "stopped") {
                     if (playlist.length > 0) {
+                        console.log("[Status] Starting playback from stopped state");
                         if (currentIndex === -1) currentIndex = 0;
                         playCurrentVideo();
+                    } else {
+                        console.warn("[Status] Play requested but playlist is empty");
                     }
                 } else if (s.state === "playing" && serverState === "paused") {
                     if (!showingChart) player.play().catch(() => {});
@@ -141,13 +225,27 @@
 
                 serverState = s.state;
             })
-            .catch(() => {});
+            .catch(err => {
+                console.error("[Status] Poll failed:", err);
+            });
     }
 
     // ---- Video playback ---------------------------------------------------
     function playCurrentVideo() {
-        if (playlist.length === 0) return;
-        if (serverState === "stopped") return;
+        if (playlist.length === 0) {
+            console.warn("[Player] No videos in playlist");
+            return;
+        }
+        if (serverState === "stopped") {
+            console.log("[Player] Ignoring play — state is stopped");
+            return;
+        }
+
+        // Clamp index just in case
+        if (currentIndex < 0 || currentIndex >= playlist.length) {
+            console.warn("[Player] Index out of bounds:", currentIndex, "- resetting to 0");
+            currentIndex = 0;
+        }
 
         splash.style.display = "none";
         chartOverlay.style.display = "none";
@@ -155,9 +253,12 @@
         showingChart = false;
 
         const filename = playlist[currentIndex].filename;
+        console.log("[Player] Playing:", filename, "(" + (currentIndex + 1) + "/" + playlist.length + ")");
         player.src = "/videos/" + encodeURIComponent(filename);
         reportVideo(filename);
-        player.play().catch(() => {
+        player.play().then(() => {
+            consecutiveErrors = 0; // successful play resets error count
+        }).catch(() => {
             document.addEventListener("click", function once() {
                 player.play();
                 document.removeEventListener("click", once);
@@ -172,7 +273,7 @@
         videoCounter++;
 
         // Check if it's time for a chart slide
-        if (chartsEnabled && chartFrequency > 0 && videoCounter % chartFrequency === 0) {
+        if (chartQueue.length > 0 && chartFrequency > 0 && videoCounter % chartFrequency === 0) {
             showChartSlide();
             return;
         }
@@ -183,24 +284,25 @@
 
     // ---- Chart slides -----------------------------------------------------
     function showChartSlide() {
-        const metal = CHART_METALS[chartMetalIndex % CHART_METALS.length];
-        chartMetalIndex++;
+        if (chartQueue.length === 0) { advanceToNext(); return; }
+
+        const entry = chartQueue[chartQueueIndex % chartQueue.length];
+        chartQueueIndex++;
         showingChart = true;
 
         player.pause();
         player.style.display = "none";
-        reportVideo("Chart: " + metal.name);
+        reportVideo("Chart: " + entry.name + " " + entry.periodLabel);
 
-        chartTitle.textContent = metal.name.toUpperCase() + " \u2014 7 Day Price (CAD)";
+        chartTitle.textContent = entry.name.toUpperCase() + " \u2014 " + entry.periodLabel + " Price (" + displayCurrency + ")";
         chartOverlay.style.display = "flex";
 
-        fetchChartData(metal.symbol, function (data) {
+        fetchChartData(entry.symbol, entry.period, function (data) {
             if (!data) {
-                // No data — skip chart, resume video
                 resumeAfterChart();
                 return;
             }
-            renderChart(data, metal);
+            renderChart(data, entry);
             chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
         });
     }
@@ -219,15 +321,15 @@
         playCurrentVideo();
     }
 
-    function fetchChartData(symbol, cb) {
-        // Check client-side cache
-        const cached = chartCache[symbol];
+    function fetchChartData(symbol, period, cb) {
+        var cacheKey = symbol + ":" + period;
+        var cached = chartCache[cacheKey];
         if (cached && Date.now() - cached.time < CHART_CACHE_TTL) {
             cb(cached.data);
             return;
         }
 
-        fetch("/api/chart-data/" + encodeURIComponent(symbol))
+        fetch("/api/chart-data/" + encodeURIComponent(symbol) + "?period=" + encodeURIComponent(period))
             .then(r => {
                 if (!r.ok) throw new Error(r.status);
                 return r.json();
@@ -237,7 +339,7 @@
                     cb(null);
                     return;
                 }
-                chartCache[symbol] = { data: data, time: Date.now() };
+                chartCache[cacheKey] = { data: data, time: Date.now() };
                 cb(data);
             })
             .catch(() => cb(null));
@@ -248,6 +350,11 @@
             chartInstance.destroy();
             chartInstance = null;
         }
+
+        // Pick the right price array for the selected currency
+        var pricesKey = "prices_" + displayCurrency.toLowerCase();
+        var prices = data[pricesKey] || data.prices_cad || data.prices_usd || [];
+        var currSym = displayCurrency === "EUR" ? "\u20AC" : "$";
 
         // Thin the labels — show ~12 evenly spaced labels on the x-axis
         const totalPoints = data.labels.length;
@@ -262,8 +369,8 @@
             data: {
                 labels: thinLabels,
                 datasets: [{
-                    label: metal.name + " (CAD)",
-                    data: data.prices,
+                    label: metal.name + " (" + displayCurrency + ")",
+                    data: prices,
                     borderColor: metal.color,
                     backgroundColor: metal.color + "18",
                     borderWidth: 2.5,
@@ -287,7 +394,7 @@
                         ticks: {
                             color: "#888",
                             font: { size: 14 },
-                            callback: function (v) { return "$" + v.toLocaleString(); },
+                            callback: function (v) { return currSym + v.toLocaleString(); },
                         },
                         grid: { color: "rgba(255,255,255,0.06)" },
                     },
@@ -301,10 +408,31 @@
     }
 
     // ---- Events -----------------------------------------------------------
-    player.addEventListener("ended", advanceToNext);
+    player.addEventListener("ended", function () {
+        console.log("[Player] Video ended, advancing");
+        advanceToNext();
+    });
 
     player.addEventListener("error", function () {
-        setTimeout(advanceToNext, 1000);
+        const src = player.getAttribute("src") || "unknown";
+        consecutiveErrors++;
+        console.error("[Player] Error loading:", src,
+            "| Consecutive errors:", consecutiveErrors + "/" + playlist.length);
+
+        if (consecutiveErrors >= playlist.length && playlist.length > 0) {
+            // Every video in the playlist failed — stop looping
+            console.error("[Player] All videos failed to load, showing error splash");
+            player.pause();
+            player.removeAttribute("src");
+            player.style.display = "none";
+            showSplash("Video playback error",
+                "All " + playlist.length + " video(s) failed to load — check files in /videos/");
+            consecutiveErrors = 0;
+            return;
+        }
+
+        // Skip to next video after a brief delay
+        setTimeout(advanceToNext, 500);
     });
 
     // ---- Init & polling ---------------------------------------------------
@@ -325,18 +453,27 @@
     const tickerUpdated = document.getElementById("ticker-updated");
 
     let tickerMode = "static";
+    let currency = "CAD";
+
+    const CURR_MAP = {
+        CAD: { priceKey: "price_cad", changeKey: "change_dollar", sym: "$" },
+        USD: { priceKey: "price_usd", changeKey: "change_usd",    sym: "$" },
+        EUR: { priceKey: "price_eur", changeKey: "change_eur",    sym: "\u20AC" },
+    };
 
     // ---- Format helpers ---------------------------------------------------
     function fmtPrice(n) {
-        return "$" + Number(n).toLocaleString("en-CA", {
+        var s = (CURR_MAP[currency] || CURR_MAP.CAD).sym;
+        return s + Number(n).toLocaleString("en-CA", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         });
     }
 
     function fmtChange(n) {
+        var s = (CURR_MAP[currency] || CURR_MAP.CAD).sym;
         const abs = Math.abs(n);
-        return "$" + abs.toLocaleString("en-CA", {
+        return s + abs.toLocaleString("en-CA", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         });
@@ -363,8 +500,12 @@
             return;
         }
 
+        var cc = CURR_MAP[currency] || CURR_MAP.CAD;
+
         const items = prices.map((p, i) => {
-            const pos = p.change_dollar >= 0;
+            const price = p[cc.priceKey];
+            const change = p[cc.changeKey] || 0;
+            const pos = change >= 0;
             const cls = pos ? "change-pos" : "change-neg";
             const arrow = pos ? "\u25B2" : "\u25BC";
             const sign = pos ? "+" : "-";
@@ -375,9 +516,9 @@
 
             return '<span class="ticker-item">'
                 + '<span class="metal-name">' + p.name + '</span> '
-                + '<span class="metal-price">' + fmtPrice(p.price_cad) + '</span> '
+                + '<span class="metal-price">' + fmtPrice(price) + '</span> '
                 + '<span class="metal-change ' + cls + '">'
-                    + arrow + fmtChange(p.change_dollar)
+                    + arrow + fmtChange(change)
                     + ' (' + sign + fmtPct(p.change_percent) + ')'
                 + '</span>'
                 + '</span>'
@@ -424,6 +565,12 @@
                 if (newMode !== tickerMode) {
                     tickerMode = newMode;
                     applyMode();
+                }
+
+                var newCurrency = settings.currency || "CAD";
+                if (newCurrency !== currency) {
+                    currency = newCurrency;
+                    fetchPrices(); // re-render with new currency
                 }
 
                 if (settings.ticker_enabled === "false") {

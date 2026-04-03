@@ -68,6 +68,28 @@ body {
     word-break: break-all;
 }
 
+/* Scrollable playlist */
+#playlist-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Chart metals grid */
+.chart-metals-table {
+    font-size: 0.85rem;
+}
+.chart-metals-table td,
+.chart-metals-table th {
+    padding: 0.2rem 0.3rem;
+    vertical-align: middle;
+}
+.chart-metals-table .form-switch {
+    min-height: auto;
+}
+.chart-metals-table .form-check-label {
+    font-size: 0.82rem;
+}
+
 /* Empty playlist */
 .playlist-empty {
     text-align: center;

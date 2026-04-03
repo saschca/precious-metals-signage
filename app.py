@@ -2,16 +2,24 @@ import sys
 import os
 import json
 import sqlite3
+import socket
+import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
 import time
 import threading
 import mimetypes
 import atexit
-from flask import Flask, render_template, jsonify, redirect, url_for, request, Response
+import webbrowser
+from flask import Flask, render_template, render_template_string, jsonify, redirect, url_for, request, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 from utils.price_fetcher import fetch_and_store, get_failure_status
 from utils.system_utils import launch_chrome_kiosk
+
+try:
+    from screeninfo import get_monitors
+except ImportError:
+    get_monitors = None
 
 # Determine base directory (handles PyInstaller bundle)
 # BASE_DIR  = where the .exe lives (writable: db, config, videos, logs)
@@ -82,6 +90,15 @@ def init_db():
         )
     ''')
 
+    # Migration: add EUR and USD-change columns to prices
+    for col_def in ['price_eur REAL DEFAULT 0',
+                     'change_usd REAL DEFAULT 0',
+                     'change_eur REAL DEFAULT 0']:
+        try:
+            cursor.execute(f'ALTER TABLE prices ADD COLUMN {col_def}')
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -94,10 +111,12 @@ def init_db():
         'ticker_enabled': 'true',
         'ticker_mode': 'static',
         'update_interval': '1',
-        'charts_enabled': 'true',
+        'chart_metals': '{"GC=F":["5d"],"SI=F":["5d"],"PL=F":["5d"],"PA=F":["5d"]}',
         'chart_frequency': '3',
         'chart_duration': '15',
+        'currency': 'CAD',
         'auto_start': 'false',
+        'display_monitor': '1',
     }
     for key, value in defaults.items():
         cursor.execute(
@@ -116,7 +135,12 @@ app = Flask(__name__,
             template_folder=os.path.join(BUNDLE_DIR, 'templates'),
             static_folder=os.path.join(BUNDLE_DIR, 'static'))
 
-APP_VERSION = '1.0.0'
+VERSION_PATH = os.path.join(BASE_DIR, 'VERSION')
+if os.path.exists(VERSION_PATH):
+    with open(VERSION_PATH, 'r') as f:
+        APP_VERSION = f.read().strip()
+else:
+    APP_VERSION = '0.0.0'
 
 # Ensure videos directory exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
@@ -149,7 +173,12 @@ def api_playlist():
         'SELECT id, filename, display_order, enabled FROM playlist ORDER BY display_order'
     ).fetchall()
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['exists'] = os.path.isfile(os.path.join(VIDEOS_DIR, d['filename']))
+        result.append(d)
+    return jsonify(result)
 
 @app.route('/api/playlist/add', methods=['POST'])
 def api_playlist_add():
@@ -183,6 +212,33 @@ def api_playlist_add():
 
     logger.info(f'Added to playlist: {filename} (order={next_order})')
     return jsonify({'id': new_id, 'filename': filename, 'display_order': next_order}), 201
+
+@app.route('/api/playlist/add-all', methods=['POST'])
+def api_playlist_add_all():
+    formats = config.get('display', {}).get('video_formats', ['.mp4', '.webm', '.mov'])
+    all_files = []
+    for f in sorted(os.listdir(VIDEOS_DIR)):
+        ext = os.path.splitext(f)[1].lower()
+        if ext in formats and os.path.isfile(os.path.join(VIDEOS_DIR, f)):
+            all_files.append(f)
+
+    conn = get_db()
+    existing = {row['filename'] for row in conn.execute('SELECT filename FROM playlist').fetchall()}
+    row = conn.execute('SELECT COALESCE(MAX(display_order), 0) AS max_order FROM playlist').fetchone()
+    next_order = row['max_order'] + 1
+
+    added = []
+    for filename in all_files:
+        if filename not in existing:
+            conn.execute('INSERT INTO playlist (filename, display_order) VALUES (?, ?)', (filename, next_order))
+            added.append(filename)
+            next_order += 1
+
+    conn.commit()
+    conn.close()
+
+    logger.info(f'Bulk added {len(added)} videos to playlist')
+    return jsonify({'added': added, 'count': len(added)}), 201
 
 @app.route('/api/playlist/remove', methods=['POST'])
 def api_playlist_remove():
@@ -253,7 +309,8 @@ METAL_NAMES = {'GC=F': 'Gold', 'SI=F': 'Silver', 'PL=F': 'Platinum', 'PA=F': 'Pa
 def api_prices():
     conn = get_db()
     rows = conn.execute('''
-        SELECT metal, price_usd, price_cad, change_dollar, change_percent, fetched_at
+        SELECT metal, price_usd, price_cad, price_eur,
+               change_usd, change_dollar, change_eur, change_percent, fetched_at
         FROM prices
         WHERE fetched_at = (SELECT MAX(fetched_at) FROM prices)
     ''').fetchall()
@@ -283,63 +340,158 @@ def api_prices_refresh():
 # --- API: Chart data -------------------------------------------------------
 import yfinance as yf
 
-_chart_cache = {}           # symbol -> {'data': ..., 'time': float}
+_chart_cache = {}           # "symbol:period" -> {'data': ..., 'time': float}
 _chart_cache_lock = threading.Lock()
 CHART_CACHE_TTL = 900       # 15 minutes
+
+CHART_PERIODS = {
+    '5d':  {'interval': '1h', 'label': '1 Week'},
+    '1mo': {'interval': '1h', 'label': '1 Month'},
+    '1y':  {'interval': '1d', 'label': '1 Year'},
+    '10y': {'interval': '1d', 'label': '10 Years'},
+}
 
 @app.route('/api/chart-data/<symbol>')
 def api_chart_data(symbol):
     if symbol not in METAL_NAMES:
         return jsonify({'error': 'invalid symbol'}), 400
 
+    period = request.args.get('period', '5d')
+    if period not in CHART_PERIODS:
+        return jsonify({'error': 'invalid period'}), 400
+
+    pconf = CHART_PERIODS[period]
+    interval = pconf['interval']
+    cache_key = f'{symbol}:{period}'
+
     # Serve from cache if fresh
     with _chart_cache_lock:
-        cached = _chart_cache.get(symbol)
+        cached = _chart_cache.get(cache_key)
         if cached and time.time() - cached['time'] < CHART_CACHE_TTL:
             return jsonify(cached['data'])
 
     try:
-        tickers = [symbol, 'CADUSD=X']
-        data = yf.download(tickers, period='7d', interval='1h',
+        tickers = [symbol, 'CADUSD=X', 'EURUSD=X']
+        data = yf.download(tickers, period=period, interval=interval,
                            group_by='ticker', progress=False, threads=True)
 
         if data.empty:
             raise ValueError('yfinance returned empty data')
 
-        # USD/CAD rate
+        # FX rates
         fx_close = data['CADUSD=X']['Close'].dropna()
         if fx_close.empty:
             raise ValueError('No FX data')
         usd_cad = 1.0 / float(fx_close.iloc[-1])
 
+        usd_eur = 0.0
+        try:
+            eur_close = data['EURUSD=X']['Close'].dropna()
+            if not eur_close.empty:
+                usd_eur = 1.0 / float(eur_close.iloc[-1])
+        except Exception:
+            pass
+
         metal_col = data[symbol]['Close'].dropna()
         if metal_col.empty:
             raise ValueError(f'No data for {symbol}')
 
-        labels = [t.strftime('%b %d %H:%M') for t in metal_col.index]
-        prices_cad = [round(float(p) * usd_cad, 2) for p in metal_col]
+        if interval == '1h':
+            labels = [t.strftime('%b %d %H:%M') for t in metal_col.index]
+        elif period == '10y':
+            labels = [t.strftime('%b %Y') for t in metal_col.index]
+        else:
+            labels = [t.strftime('%b %d') for t in metal_col.index]
 
+        raw_usd = [float(p) for p in metal_col]
         result = {
             'symbol': symbol,
             'name': METAL_NAMES[symbol],
+            'period': period,
+            'period_label': pconf['label'],
             'labels': labels,
-            'prices': prices_cad,
-            'currency': 'CAD',
+            'prices_usd': [round(p, 2) for p in raw_usd],
+            'prices_cad': [round(p * usd_cad, 2) for p in raw_usd],
+            'prices_eur': [round(p * usd_eur, 2) for p in raw_usd],
         }
 
         with _chart_cache_lock:
-            _chart_cache[symbol] = {'data': result, 'time': time.time()}
+            _chart_cache[cache_key] = {'data': result, 'time': time.time()}
 
-        logger.info(f'Chart data fetched for {symbol} ({len(labels)} points)')
+        logger.info(f'Chart data fetched for {symbol} period={period} ({len(labels)} points)')
         return jsonify(result)
 
     except Exception as e:
-        logger.error(f'Chart data fetch failed for {symbol}: {e}')
+        logger.error(f'Chart data fetch failed for {symbol} period={period}: {e}')
         # Return stale cache if available
         with _chart_cache_lock:
             if cached:
                 return jsonify(cached['data'])
         return jsonify({'error': str(e)}), 502
+
+# --- API: Monitors ---------------------------------------------------------
+def _get_monitor_list():
+    """Return list of monitor dicts, or None if screeninfo unavailable."""
+    if get_monitors is None:
+        return None
+    try:
+        monitors = get_monitors()
+        return [{
+            'index': i,
+            'name': m.name or f'Monitor {i + 1}',
+            'width': m.width,
+            'height': m.height,
+            'x': m.x,
+            'y': m.y,
+        } for i, m in enumerate(monitors)]
+    except Exception as e:
+        logger.error(f'Monitor detection failed: {e}')
+        return None
+
+@app.route('/api/monitors')
+def api_monitors():
+    monitors = _get_monitor_list()
+    if monitors is None:
+        return jsonify({'error': 'screeninfo not available'}), 500
+    return jsonify(monitors)
+
+IDENTIFY_HTML = '''<!DOCTYPE html>
+<html><head><style>
+body { margin:0; background:#000; color:#fff; display:flex; flex-direction:column;
+       align-items:center; justify-content:center; height:100vh;
+       font-family:'Segoe UI',Arial,sans-serif; user-select:none; }
+.num { font-size:14rem; font-weight:700; line-height:1; }
+.label { font-size:2.5rem; font-weight:300; opacity:0.6; margin-top:0.5rem; }
+</style></head><body>
+<div class="num">{{ n }}</div>
+<div class="label">{{ name }}</div>
+<script>setTimeout(function(){ window.close(); }, 3000);</script>
+</body></html>'''
+
+@app.route('/display/identify')
+def display_identify():
+    n = request.args.get('n', '?')
+    name = request.args.get('name', '')
+    return render_template_string(IDENTIFY_HTML, n=n, name=name)
+
+@app.route('/api/monitors/identify', methods=['POST'])
+def api_monitors_identify():
+    monitors = _get_monitor_list()
+    if monitors is None:
+        return jsonify({'error': 'screeninfo not available'}), 500
+
+    port = config.get('flask_port', 5000)
+    for m in monitors:
+        url = f'http://localhost:{port}/display/identify?n={m["index"] + 1}&name={m["name"]}'
+        cmd = (
+            f'start "" chrome --app="{url}" --new-window'
+            f' --window-position={m["x"]},{m["y"]}'
+            f' --window-size={m["width"]},{m["height"]}'
+        )
+        subprocess.Popen(cmd, shell=True)
+
+    logger.info(f'Monitor identify launched for {len(monitors)} monitors')
+    return jsonify({'count': len(monitors)})
 
 # --- API: Settings ---------------------------------------------------------
 @app.route('/api/settings', methods=['GET'])
@@ -347,10 +499,7 @@ def api_settings_get():
     conn = get_db()
     rows = conn.execute('SELECT key, value FROM settings').fetchall()
     conn.close()
-    # Merge config.json values so admin can see/edit them
     result = {r['key']: r['value'] for r in rows}
-    result['monitor_offset_x'] = str(config.get('monitor_offset_x', 1920))
-    result['monitor_offset_y'] = str(config.get('monitor_offset_y', 0))
     return jsonify(result)
 
 @app.route('/api/settings', methods=['POST'])
@@ -361,7 +510,8 @@ def api_settings_update():
 
     conn = get_db()
     db_keys = {'ticker_enabled', 'ticker_mode', 'update_interval',
-               'charts_enabled', 'chart_frequency', 'chart_duration', 'auto_start'}
+               'chart_metals', 'chart_frequency', 'chart_duration',
+               'currency', 'auto_start', 'display_monitor'}
 
     for key, value in data.items():
         if key in db_keys:
@@ -371,18 +521,6 @@ def api_settings_update():
             )
     conn.commit()
     conn.close()
-
-    # Handle config.json keys
-    config_changed = False
-    if 'monitor_offset_x' in data:
-        config['monitor_offset_x'] = int(data['monitor_offset_x'])
-        config_changed = True
-    if 'monitor_offset_y' in data:
-        config['monitor_offset_y'] = int(data['monitor_offset_y'])
-        config_changed = True
-    if config_changed:
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(config, f, indent=2)
 
     # Reschedule price fetcher if interval changed
     if 'update_interval' in data:
@@ -395,11 +533,24 @@ def api_settings_update():
 @app.route('/api/launch-display', methods=['POST'])
 def api_launch_display():
     port = config.get('flask_port', 5000)
-    offset_x = config.get('monitor_offset_x', 1920)
-    offset_y = config.get('monitor_offset_y', 0)
+
+    # Look up selected monitor's position
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key = 'display_monitor'").fetchone()
+    conn.close()
+    monitor_idx = int(row['value']) if row else 1
+
+    monitors = _get_monitor_list()
+    if monitors and 0 <= monitor_idx < len(monitors):
+        m = monitors[monitor_idx]
+        offset_x, offset_y = m['x'], m['y']
+    else:
+        # Fallback: assume second monitor is to the right
+        offset_x, offset_y = 1920, 0
+
     ok = launch_chrome_kiosk(port, offset_x, offset_y)
     if ok:
-        return jsonify({'status': 'ok'})
+        return jsonify({'status': 'ok', 'monitor': monitor_idx})
     return jsonify({'error': 'failed to launch Chrome'}), 500
 
 # --- API: Status & Control -------------------------------------------------
@@ -571,9 +722,53 @@ def start_scheduler():
     logger.info(f'Price scheduler started (every {interval} min)')
 
 # ---------------------------------------------------------------------------
+# Instance guard
+# ---------------------------------------------------------------------------
+def is_port_in_use(port):
+    """Check if a port is already bound by another process."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        try:
+            s.connect(('127.0.0.1', port))
+            return True
+        except (ConnectionRefusedError, OSError):
+            return False
+
+LOCK_PATH = os.path.join(BASE_DIR, '.signage.lock')
+
+def acquire_lock(port):
+    """Write a lockfile with our PID. Returns True if we got the lock."""
+    if os.path.exists(LOCK_PATH):
+        try:
+            with open(LOCK_PATH, 'r') as f:
+                old_pid = int(f.read().strip())
+            # Check if that process is still alive (Windows-compatible)
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, old_pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return False  # process still running
+        except (ValueError, OSError, AttributeError):
+            pass  # stale lock, we can take it
+    with open(LOCK_PATH, 'w') as f:
+        f.write(str(os.getpid()))
+    atexit.register(lambda: os.path.exists(LOCK_PATH) and os.remove(LOCK_PATH))
+    return True
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
+    port = config.get('flask_port', 5000)
+
+    # Prevent duplicate launches
+    if is_port_in_use(port) or not acquire_lock(port):
+        print(f'Another instance is already running on port {port}.')
+        print(f'Opening admin panel in browser...')
+        webbrowser.open(f'http://localhost:{port}/admin')
+        sys.exit(0)
+
     init_db()
 
     # Fetch prices once immediately, then start scheduler
@@ -586,7 +781,6 @@ if __name__ == '__main__':
 
     start_scheduler()
 
-    port = config.get('flask_port', 5000)
     logger.info(f'Starting Precious Metals Signage on port {port}')
     print(f'Precious Metals Digital Signage')
     print(f'  Admin:   http://localhost:{port}/admin')
