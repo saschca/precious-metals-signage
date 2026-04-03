@@ -6,6 +6,7 @@ _(none)_
 
 ## Changelog
 
+- **v1.3.1** (2026-04-03) — Build: build.bat reads VERSION file automatically, exe filename includes version (PreciousMetalsSignage-vX.Y.Z.exe), VERSION bundled into exe
 - **v1.3.0** (2026-04-03) — Image slide support: playlist now accepts .jpg/.jpeg/.png/.webp/.gif alongside videos; images display fullscreen for a configurable duration (default 10s) then advance; admin shows video/image icons in playlist; new "Image display" duration slider in Display settings
 - **v1.2.0** (2026-04-03) — Currency selector: added CAD/USD/EUR dropdown in admin Ticker settings; price fetcher now pulls EURUSD=X alongside CADUSD=X; prices table stores all three currencies; display ticker and chart slides render in the selected currency ($ for USD/CAD, € for EUR); chart data API returns all three price arrays per request
 - **v1.1.0** (2026-04-03) — Smart monitor picker: replaced manual offset X/Y inputs with auto-detected monitor dropdown using `screeninfo`, added "Identify" button that flashes monitor numbers on all screens, settings now store monitor index instead of raw pixel offsets
