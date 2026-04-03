@@ -36,6 +36,10 @@ CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
 VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
 LOG_PATH = os.path.join(BASE_DIR, 'signage.log')
 
+VIDEO_EXTS = {'.mp4', '.webm', '.mov'}
+IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+MEDIA_EXTS = VIDEO_EXTS | IMAGE_EXTS
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -115,6 +119,7 @@ def init_db():
         'chart_frequency': '3',
         'chart_duration': '15',
         'currency': 'CAD',
+        'image_duration': '10',
         'auto_start': 'false',
         'display_monitor': '1',
     }
@@ -176,6 +181,8 @@ def api_playlist():
     result = []
     for r in rows:
         d = dict(r)
+        ext = os.path.splitext(d['filename'])[1].lower()
+        d['type'] = 'image' if ext in IMAGE_EXTS else 'video'
         d['exists'] = os.path.isfile(os.path.join(VIDEOS_DIR, d['filename']))
         result.append(d)
     return jsonify(result)
@@ -188,10 +195,9 @@ def api_playlist_add():
         return jsonify({'error': 'filename is required'}), 400
 
     # Validate the file actually exists in /videos/
-    formats = config.get('display', {}).get('video_formats', ['.mp4', '.webm', '.mov'])
     ext = os.path.splitext(filename)[1].lower()
     filepath = os.path.join(VIDEOS_DIR, filename)
-    if ext not in formats or not os.path.isfile(filepath):
+    if ext not in MEDIA_EXTS or not os.path.isfile(filepath):
         return jsonify({'error': 'file not found in videos folder'}), 404
 
     conn = get_db()
@@ -215,11 +221,10 @@ def api_playlist_add():
 
 @app.route('/api/playlist/add-all', methods=['POST'])
 def api_playlist_add_all():
-    formats = config.get('display', {}).get('video_formats', ['.mp4', '.webm', '.mov'])
     all_files = []
     for f in sorted(os.listdir(VIDEOS_DIR)):
         ext = os.path.splitext(f)[1].lower()
-        if ext in formats and os.path.isfile(os.path.join(VIDEOS_DIR, f)):
+        if ext in MEDIA_EXTS and os.path.isfile(os.path.join(VIDEOS_DIR, f)):
             all_files.append(f)
 
     conn = get_db()
@@ -287,16 +292,16 @@ def api_playlist_reorder():
 @app.route('/api/videos')
 def api_videos():
     os.makedirs(VIDEOS_DIR, exist_ok=True)
-    formats = config.get('display', {}).get('video_formats', ['.mp4', '.webm', '.mov'])
     files = []
     for f in sorted(os.listdir(VIDEOS_DIR)):
         ext = os.path.splitext(f)[1].lower()
-        if ext in formats:
+        if ext in MEDIA_EXTS:
             filepath = os.path.join(VIDEOS_DIR, f)
             try:
                 files.append({
                     'filename': f,
                     'size': os.path.getsize(filepath),
+                    'type': 'image' if ext in IMAGE_EXTS else 'video',
                 })
             except OSError:
                 pass
@@ -511,7 +516,7 @@ def api_settings_update():
     conn = get_db()
     db_keys = {'ticker_enabled', 'ticker_mode', 'update_interval',
                'chart_metals', 'chart_frequency', 'chart_duration',
-               'currency', 'auto_start', 'display_monitor'}
+               'currency', 'image_duration', 'auto_start', 'display_monitor'}
 
     for key, value in data.items():
         if key in db_keys:
@@ -625,7 +630,11 @@ def api_logs():
     return jsonify([])
 
 # --- Video file serving (with range request support) -----------------------
-MIME_MAP = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime'}
+MIME_MAP = {
+    '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+    '.webp': 'image/webp', '.gif': 'image/gif',
+}
 
 @app.route('/videos/<path:filename>')
 def serve_video(filename):

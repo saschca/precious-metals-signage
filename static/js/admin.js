@@ -119,20 +119,22 @@
 
     function renderPlaylist(items) {
         var countBadge = document.getElementById("playlist-count");
-        countBadge.textContent = items.length + " video" + (items.length !== 1 ? "s" : "");
+        countBadge.textContent = items.length + " item" + (items.length !== 1 ? "s" : "");
 
         if (items.length === 0) {
             playlistList.innerHTML = '<li class="list-group-item playlist-empty">Playlist is empty</li>';
             return;
         }
-        playlistList.innerHTML = items.map(item =>
-            '<li class="list-group-item list-group-item-action playlist-item" data-id="' + item.id + '">'
-            + '<i class="bi bi-grip-vertical drag-handle"></i>'
-            + '<span class="filename">' + escHtml(item.filename) + '</span>'
-            + '<button class="btn btn-sm btn-outline-danger btn-remove" data-id="' + item.id + '" title="Remove">'
-            + '<i class="bi bi-trash"></i></button>'
-            + '</li>'
-        ).join("");
+        playlistList.innerHTML = items.map(item => {
+            var icon = item.type === "image" ? "bi-image" : "bi-film";
+            return '<li class="list-group-item list-group-item-action playlist-item" data-id="' + item.id + '">'
+                + '<i class="bi bi-grip-vertical drag-handle"></i>'
+                + '<i class="bi ' + icon + ' me-1 text-muted"></i>'
+                + '<span class="filename">' + escHtml(item.filename) + '</span>'
+                + '<button class="btn btn-sm btn-outline-danger btn-remove" data-id="' + item.id + '" title="Remove">'
+                + '<i class="bi bi-trash"></i></button>'
+                + '</li>';
+        }).join("");
     }
 
     function escHtml(s) {
@@ -227,7 +229,7 @@
                 const inPlaylist = new Set(currentPlaylist.map(p => p.filename));
                 const available = files.filter(f => !inPlaylist.has(f.filename));
 
-                videoSelect.innerHTML = '<option value="">Select a video to add...</option>';
+                videoSelect.innerHTML = '<option value="">Select a file to add...</option>';
                 available.forEach(f => {
                     const opt = document.createElement("option");
                     opt.value = f.filename;
@@ -308,6 +310,7 @@
     const setUpdateInterval  = document.getElementById("set-update-interval");
     const setChartFrequency  = document.getElementById("set-chart-frequency");
     const setChartDuration   = document.getElementById("set-chart-duration");
+    const setImageDuration   = document.getElementById("set-image-duration");
     const setDisplayMonitor  = document.getElementById("set-display-monitor");
     const setAutoStart       = document.getElementById("set-auto-start");
     const chartMetalsTable   = document.getElementById("chart-metals-table");
@@ -321,6 +324,9 @@
     });
     setChartDuration.addEventListener("input", () => {
         document.getElementById("dur-val").textContent = setChartDuration.value;
+    });
+    setImageDuration.addEventListener("input", () => {
+        document.getElementById("imgdur-val").textContent = setImageDuration.value;
     });
 
     // Chart metals grid: toggle enables/disables period checkboxes per metal
@@ -431,6 +437,9 @@
                 setChartDuration.value = s.chart_duration || "15";
                 document.getElementById("dur-val").textContent = setChartDuration.value;
 
+                setImageDuration.value = s.image_duration || "10";
+                document.getElementById("imgdur-val").textContent = setImageDuration.value;
+
                 savedMonitorIndex = s.display_monitor || "1";
                 setDisplayMonitor.value = savedMonitorIndex;
 
@@ -449,6 +458,7 @@
             chart_metals:     getChartMetalsConfig(),
             chart_frequency:  setChartFrequency.value,
             chart_duration:   setChartDuration.value,
+            image_duration:   setImageDuration.value,
             display_monitor:  setDisplayMonitor.value,
             auto_start:       setAutoStart.checked ? "true" : "false",
         };

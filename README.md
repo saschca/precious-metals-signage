@@ -11,7 +11,7 @@ Free, self-hosted digital signage system for precious metals shops. Video loop +
 
 A full-screen signage display for a second monitor (or TV) that loops your promo videos with a live precious metals price ticker along the bottom. Periodically inserts interactive price chart slides between videos. All controlled from a web-based admin panel.
 
-- **Video loop** — drag-and-drop playlist with reorder support
+- **Media loop** — drag-and-drop playlist with videos and image slides
 - **Live ticker** — Gold, Silver, Platinum, Palladium prices updated every minute
 - **Chart slides** — configurable per-metal, per-timeframe (1W / 1M / 1Y / 10Y)
 - **Admin panel** — manage everything from any browser on your network
@@ -21,7 +21,8 @@ A full-screen signage display for a second monitor (or TV) that loops your promo
 
 - Bootstrap 5 dark-theme admin panel
 - Drag-and-drop playlist reordering (SortableJS)
-- Bulk "Add All" videos button
+- Image slides with configurable display duration (.jpg, .png, .webp, .gif)
+- Bulk "Add All" media button
 - Live price fetching via yfinance — no API key required
 - Chart.js price charts with configurable metals and time ranges
 - Multi-currency display: CAD, USD, EUR
@@ -44,7 +45,7 @@ A full-screen signage display for a second monitor (or TV) that loops your promo
 ## Quick Start (Windows .exe)
 
 1. Download `PreciousMetalsSignage.exe` from [Releases](https://github.com/saschca/precious-metals-signage/releases)
-2. Place it in a folder, create a `videos/` subfolder, drop in your `.mp4` files
+2. Place it in a folder, create a `videos/` subfolder, drop in your `.mp4` / `.jpg` / `.png` files
 3. Double-click the exe
 4. Open `http://localhost:5000/admin` in your browser
 5. Add videos to the playlist, hit Play, click Launch Display

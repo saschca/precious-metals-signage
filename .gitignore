@@ -5,11 +5,16 @@ config.json
 .signage.lock
 .env
 
-# Video files
+# Media files
 videos/*.mp4
 videos/*.webm
 videos/*.mov
 videos/*.mkv
+videos/*.jpg
+videos/*.jpeg
+videos/*.png
+videos/*.webp
+videos/*.gif
 
 # Python
 __pycache__/

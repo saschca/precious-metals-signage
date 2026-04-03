@@ -3,6 +3,7 @@
     "use strict";
 
     const player = document.getElementById("player");
+    const imagePlayer = document.getElementById("image-player");
     const splash = document.getElementById("splash");
     const chartOverlay = document.getElementById("chart-overlay");
     const chartTitle = document.getElementById("chart-title");
@@ -13,6 +14,8 @@
     let videoCounter = 0;
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 3;
+    let imageTimer = null;
+    let imageDuration = 10;
 
     // ---- Chart state ------------------------------------------------------
     const METAL_INFO = {
@@ -46,6 +49,7 @@
             .then(s => {
                 chartFrequency = parseInt(s.chart_frequency, 10) || 3;
                 chartDuration = parseInt(s.chart_duration, 10) || 15;
+                imageDuration = parseInt(s.image_duration, 10) || 10;
                 displayCurrency = s.currency || "CAD";
 
                 // Build chart queue from per-metal settings
@@ -197,6 +201,9 @@
                     player.pause();
                     player.removeAttribute("src");
                     player.style.display = "none";
+                    imagePlayer.style.display = "none";
+                    imagePlayer.removeAttribute("src");
+                    if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
                     chartOverlay.style.display = "none";
                     if (chartDismissTimer) {
                         clearTimeout(chartDismissTimer);
@@ -218,9 +225,18 @@
                         console.warn("[Status] Play requested but playlist is empty");
                     }
                 } else if (s.state === "playing" && serverState === "paused") {
-                    if (!showingChart) player.play().catch(() => {});
+                    if (!showingChart) {
+                        if (imagePlayer.style.display === "block") {
+                            imageTimer = setTimeout(advanceToNext, imageDuration * 1000);
+                        } else {
+                            player.play().catch(() => {});
+                        }
+                    }
                 } else if (s.state === "paused" && serverState === "playing") {
-                    if (!showingChart) player.pause();
+                    if (!showingChart) {
+                        if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
+                        else { player.pause(); }
+                    }
                 }
 
                 serverState = s.state;
@@ -230,10 +246,12 @@
             });
     }
 
-    // ---- Video playback ---------------------------------------------------
+    // ---- Media playback (video + image) ------------------------------------
     function playCurrentVideo() {
+        if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
+
         if (playlist.length === 0) {
-            console.warn("[Player] No videos in playlist");
+            console.warn("[Player] No items in playlist");
             return;
         }
         if (serverState === "stopped") {
@@ -249,21 +267,39 @@
 
         splash.style.display = "none";
         chartOverlay.style.display = "none";
-        player.style.display = "block";
         showingChart = false;
 
-        const filename = playlist[currentIndex].filename;
-        console.log("[Player] Playing:", filename, "(" + (currentIndex + 1) + "/" + playlist.length + ")");
-        player.src = "/videos/" + encodeURIComponent(filename);
+        var item = playlist[currentIndex];
+        var filename = item.filename;
+        var isImage = item.type === "image";
+        var src = "/videos/" + encodeURIComponent(filename);
+
+        console.log("[Player]", isImage ? "Showing image:" : "Playing:", filename,
+            "(" + (currentIndex + 1) + "/" + playlist.length + ")");
         reportVideo(filename);
-        player.play().then(() => {
-            consecutiveErrors = 0; // successful play resets error count
-        }).catch(() => {
-            document.addEventListener("click", function once() {
-                player.play();
-                document.removeEventListener("click", once);
+
+        if (isImage) {
+            player.pause();
+            player.removeAttribute("src");
+            player.style.display = "none";
+            imagePlayer.src = src;
+            imagePlayer.style.display = "block";
+            consecutiveErrors = 0;
+            imageTimer = setTimeout(advanceToNext, imageDuration * 1000);
+        } else {
+            imagePlayer.style.display = "none";
+            imagePlayer.removeAttribute("src");
+            player.style.display = "block";
+            player.src = src;
+            player.play().then(() => {
+                consecutiveErrors = 0;
+            }).catch(() => {
+                document.addEventListener("click", function once() {
+                    player.play();
+                    document.removeEventListener("click", once);
+                });
             });
-        });
+        }
     }
 
     function advanceToNext() {
@@ -292,6 +328,8 @@
 
         player.pause();
         player.style.display = "none";
+        imagePlayer.style.display = "none";
+        if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
         reportVideo("Chart: " + entry.name + " " + entry.periodLabel);
 
         chartTitle.textContent = entry.name.toUpperCase() + " \u2014 " + entry.periodLabel + " Price (" + displayCurrency + ")";
@@ -432,6 +470,24 @@
         }
 
         // Skip to next video after a brief delay
+        setTimeout(advanceToNext, 500);
+    });
+
+    imagePlayer.addEventListener("error", function () {
+        var src = imagePlayer.getAttribute("src") || "unknown";
+        consecutiveErrors++;
+        console.error("[Player] Image error:", src,
+            "| Consecutive errors:", consecutiveErrors + "/" + playlist.length);
+        if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
+
+        if (consecutiveErrors >= playlist.length && playlist.length > 0) {
+            console.error("[Player] All items failed to load");
+            imagePlayer.style.display = "none";
+            showSplash("Playback error",
+                "All " + playlist.length + " item(s) failed to load — check files in /videos/");
+            consecutiveErrors = 0;
+            return;
+        }
         setTimeout(advanceToNext, 500);
     });
 
