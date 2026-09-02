@@ -2,18 +2,19 @@ PRECIOUS METALS DIGITAL SIGNAGE
 ================================
 
 FIRST TIME SETUP:
-1. Place your video files (.mp4) in the /videos/ folder
-2. Double-click PreciousMetalsSignage.exe
-3. Open Chrome and go to: http://localhost:5000/admin
-4. Add videos to the playlist using the admin panel
-5. Click "Launch Display" to open the signage on Monitor 2
-6. Click "Start" to begin the video loop
-7. Prices load automatically — no API key needed!
+1. Extract the complete release folder to a permanent location
+2. Place your media files in the /videos/ folder
+3. Double-click PreciousMetalsSignage-vX.Y.Z.exe
+4. Open http://localhost:5000/admin
+5. Identify and select the showroom monitor
+6. Add media to the playlist; the display and playback start automatically
+7. Double-click windows/install-startup.cmd to start after Windows logon
 
 DAILY USE:
-1. Double-click PreciousMetalsSignage.exe
-2. The display will auto-launch and resume where it left off
-3. Use http://localhost:5000/admin to manage videos and settings
+1. Sign into Windows (automatic Windows login is optional)
+2. The scheduled task starts the app after 20 seconds
+3. The display opens on the selected monitor and starts playing
+4. Use http://localhost:5000/admin to manage videos and settings
 
 ADDING NEW VIDEOS:
 1. Copy .mp4 files to the /videos/ folder
@@ -21,19 +22,19 @@ ADDING NEW VIDEOS:
 3. Click "Add" to include them in the playlist
 
 MONITOR SETUP:
-- By default, the display opens at monitor position X=1920, Y=0
-  (to the right of a standard 1920px primary monitor)
-- Change the offset in Settings if your layout differs
+- Use Identify in the admin panel, select the showroom monitor, and save
+- The signage browser uses a separate profile from normal office Chrome
 
 TROUBLESHOOTING:
 - If prices aren't updating, check your internet connection
-- If display is on the wrong monitor, adjust Monitor Offset in Settings
+- Price/chart failures do not stop the local media loop
+- If display is on the wrong monitor, use Identify and save the correct monitor
 - Check signage.log for error details
 - Health check: http://localhost:5000/api/health
 
 FILES:
-- PreciousMetalsSignage.exe   The application
-- config.json                 Settings (auto-created on first run)
+- PreciousMetalsSignage-vX.Y.Z.exe   The application
 - signage.db                  Database (auto-created on first run)
 - signage.log                 Log file (auto-created on first run)
-- videos/                     Place your .mp4/.webm/.mov files here
+- videos/                     Place media files here
+- windows/                    Automatic startup installer/remover

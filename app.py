@@ -1,18 +1,66 @@
-import sys
-import os
-import json
-import sqlite3
-import socket
-import subprocess
-import logging
-from logging.handlers import RotatingFileHandler
-import time
-import threading
-import mimetypes
 import atexit
-import webbrowser
-from flask import Flask, render_template, render_template_string, jsonify, redirect, url_for, request, Response
+import ctypes
+import json
+import logging
+import os
+import socket
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+from logging.handlers import RotatingFileHandler
+
+# Acquire the Windows mutex before importing large third-party packages. This
+# prevents repeated launches from piling up while PyInstaller/yfinance loads.
+_instance_mutex = None
+
+
+def acquire_instance_mutex():
+    global _instance_mutex
+    if os.name != 'nt':
+        return True
+
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateMutexW(None, False, 'Local\\PreciousMetalsSignage')
+    if not handle:
+        return False
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(handle)
+        return False
+
+    _instance_mutex = (kernel32, handle)
+
+    def release_mutex():
+        if _instance_mutex:
+            _instance_mutex[0].CloseHandle(_instance_mutex[1])
+
+    atexit.register(release_mutex)
+    return True
+
+
+if __name__ == '__main__' and not acquire_instance_mutex():
+    sys.exit(0)
+
 from apscheduler.schedulers.background import BackgroundScheduler
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    render_template_string,
+    request,
+    send_from_directory,
+    url_for,
+)
+from waitress import serve
+
 from utils.price_fetcher import fetch_and_store, get_failure_status
 from utils.system_utils import launch_chrome_kiosk
 
@@ -35,6 +83,7 @@ DB_PATH = os.path.join(BASE_DIR, 'signage.db')
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
 VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
 LOG_PATH = os.path.join(BASE_DIR, 'signage.log')
+BROWSER_PROFILE_DIR = os.path.join(BASE_DIR, 'signage-browser-profile')
 
 VIDEO_EXTS = {'.mp4', '.webm', '.mov'}
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
@@ -120,7 +169,8 @@ def init_db():
         'chart_duration': '15',
         'currency': 'CAD',
         'image_duration': '10',
-        'auto_start': 'false',
+        'media_muted': 'true',
+        'auto_launch_display': 'true',
         'display_monitor': '1',
     }
     for key, value in defaults.items():
@@ -378,7 +428,8 @@ def api_chart_data(symbol):
     try:
         tickers = [symbol, 'CADUSD=X', 'EURUSD=X']
         data = yf.download(tickers, period=period, interval=interval,
-                           group_by='ticker', progress=False, threads=True)
+                           group_by='ticker', progress=False, threads=True,
+                           timeout=10)
 
         if data.empty:
             raise ValueError('yfinance returned empty data')
@@ -516,7 +567,9 @@ def api_settings_update():
     conn = get_db()
     db_keys = {'ticker_enabled', 'ticker_mode', 'update_interval',
                'chart_metals', 'chart_frequency', 'chart_duration',
-               'currency', 'image_duration', 'auto_start', 'display_monitor'}
+               'currency', 'image_duration', 'media_muted',
+               'auto_launch_display',
+               'display_monitor'}
 
     for key, value in data.items():
         if key in db_keys:
@@ -539,6 +592,14 @@ def api_settings_update():
 def api_launch_display():
     port = config.get('flask_port', 5000)
 
+    if launch_saved_display(port):
+        return jsonify({'status': 'ok'})
+    return jsonify({'error': 'failed to launch browser'}), 500
+
+
+def launch_saved_display(port):
+    """Launch the display using the monitor currently selected in settings."""
+
     # Look up selected monitor's position
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key = 'display_monitor'").fetchone()
@@ -553,16 +614,18 @@ def api_launch_display():
         # Fallback: assume second monitor is to the right
         offset_x, offset_y = 1920, 0
 
-    ok = launch_chrome_kiosk(port, offset_x, offset_y)
-    if ok:
-        return jsonify({'status': 'ok', 'monitor': monitor_idx})
-    return jsonify({'error': 'failed to launch Chrome'}), 500
+    return launch_chrome_kiosk(
+        port,
+        offset_x,
+        offset_y,
+        profile_dir=BROWSER_PROFILE_DIR,
+    )
 
 # --- API: Status & Control -------------------------------------------------
 _start_time = time.time()
 
 _playback = {
-    'state': 'stopped',       # playing | paused | stopped
+    'state': 'playing',       # playing | paused | stopped
     'current_video': None,
     'skip_counter': 0,
 }
@@ -629,73 +692,14 @@ def api_logs():
         return jsonify([l.rstrip() for l in lines[-50:]])
     return jsonify([])
 
-# --- Video file serving (with range request support) -----------------------
-MIME_MAP = {
-    '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-    '.webp': 'image/webp', '.gif': 'image/gif',
-}
-
+# --- Media file serving ----------------------------------------------------
 @app.route('/videos/<path:filename>')
 def serve_video(filename):
-    filepath = os.path.join(VIDEOS_DIR, filename)
-    if not os.path.isfile(filepath):
-        return jsonify({'error': 'not found'}), 404
-
-    file_size = os.path.getsize(filepath)
-    ext = os.path.splitext(filename)[1].lower()
-    content_type = MIME_MAP.get(ext, mimetypes.guess_type(filename)[0] or 'application/octet-stream')
-
-    range_header = request.headers.get('Range')
-    if range_header:
-        # Parse "bytes=start-end"
-        byte_range = range_header.replace('bytes=', '').split('-')
-        start = int(byte_range[0])
-        end = int(byte_range[1]) if byte_range[1] else file_size - 1
-        end = min(end, file_size - 1)
-        length = end - start + 1
-
-        def generate():
-            with open(filepath, 'rb') as f:
-                f.seek(start)
-                remaining = length
-                while remaining > 0:
-                    chunk = f.read(min(8192, remaining))
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-                    yield chunk
-
-        return Response(
-            generate(),
-            status=206,
-            content_type=content_type,
-            headers={
-                'Content-Range': f'bytes {start}-{end}/{file_size}',
-                'Accept-Ranges': 'bytes',
-                'Content-Length': str(length),
-            },
-            direct_passthrough=True,
-        )
-
-    # Full file response
-    def generate():
-        with open(filepath, 'rb') as f:
-            while True:
-                chunk = f.read(8192)
-                if not chunk:
-                    break
-                yield chunk
-
-    return Response(
-        generate(),
-        status=200,
-        content_type=content_type,
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Length': str(file_size),
-        },
-        direct_passthrough=True,
+    return send_from_directory(
+        VIDEOS_DIR,
+        filename,
+        conditional=True,
+        max_age=0,
     )
 
 # ---------------------------------------------------------------------------
@@ -731,7 +735,7 @@ def start_scheduler():
     logger.info(f'Price scheduler started (every {interval} min)')
 
 # ---------------------------------------------------------------------------
-# Instance guard
+# Startup helpers
 # ---------------------------------------------------------------------------
 def is_port_in_use(port):
     """Check if a port is already bound by another process."""
@@ -743,27 +747,33 @@ def is_port_in_use(port):
         except (ConnectionRefusedError, OSError):
             return False
 
-LOCK_PATH = os.path.join(BASE_DIR, '.signage.lock')
+def fetch_prices_on_startup():
+    logger.info('Fetching initial prices in background')
+    result = fetch_and_store(DB_PATH)
+    if result:
+        logger.info('Initial prices loaded')
+    else:
+        logger.warning('Initial price fetch failed; scheduled retry will continue')
 
-def acquire_lock(port):
-    """Write a lockfile with our PID. Returns True if we got the lock."""
-    if os.path.exists(LOCK_PATH):
-        try:
-            with open(LOCK_PATH, 'r') as f:
-                old_pid = int(f.read().strip())
-            # Check if that process is still alive (Windows-compatible)
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x1000, False, old_pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return False  # process still running
-        except (ValueError, OSError, AttributeError):
-            pass  # stale lock, we can take it
-    with open(LOCK_PATH, 'w') as f:
-        f.write(str(os.getpid()))
-    atexit.register(lambda: os.path.exists(LOCK_PATH) and os.remove(LOCK_PATH))
-    return True
+
+def auto_launch_when_ready(port):
+    """Wait for Flask to bind, then launch the selected display once."""
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if is_port_in_use(port):
+            break
+        time.sleep(0.5)
+    else:
+        logger.error('Display was not launched because the server never became ready')
+        return
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'auto_launch_display'"
+    ).fetchone()
+    conn.close()
+    if row and row['value'] == 'true':
+        launch_saved_display(port)
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -772,26 +782,19 @@ if __name__ == '__main__':
     port = config.get('flask_port', 5000)
 
     # Prevent duplicate launches
-    if is_port_in_use(port) or not acquire_lock(port):
-        print(f'Another instance is already running on port {port}.')
-        print(f'Opening admin panel in browser...')
-        webbrowser.open(f'http://localhost:{port}/admin')
+    if is_port_in_use(port):
+        logger.error('Port %s is already in use; refusing to start', port)
         sys.exit(0)
 
     init_db()
 
-    # Fetch prices once immediately, then start scheduler
-    print('Fetching initial prices...')
-    result = fetch_and_store(DB_PATH)
-    if result:
-        print(f'  Prices loaded: {", ".join(r["name"] for r in result)}')
-    else:
-        print('  Price fetch failed (will retry on schedule)')
-
     start_scheduler()
 
+    threading.Thread(target=fetch_prices_on_startup, daemon=True).start()
+    threading.Thread(target=auto_launch_when_ready, args=(port,), daemon=True).start()
+
     logger.info(f'Starting Precious Metals Signage on port {port}')
-    print(f'Precious Metals Digital Signage')
+    print('Precious Metals Digital Signage')
     print(f'  Admin:   http://localhost:{port}/admin')
     print(f'  Display: http://localhost:{port}/display')
-    app.run(host='0.0.0.0', port=port, debug=False)
+    serve(app, host='0.0.0.0', port=port, threads=6)

@@ -13,9 +13,14 @@
     let currentIndex = -1;
     let videoCounter = 0;
     let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 3;
     let imageTimer = null;
+    let recoveryTimer = null;
     let imageDuration = 10;
+    let mediaMuted = true;
+    let lastVideoTime = -1;
+    let lastProgressAt = Date.now();
+    const STALL_TIMEOUT_MS = 15000;
+    const CHART_FETCH_TIMEOUT_MS = 8000;
 
     // ---- Chart state ------------------------------------------------------
     const METAL_INFO = {
@@ -33,6 +38,7 @@
     let chartQueueIndex = 0;
     let chartInstance = null;
     let chartDismissTimer = null;
+    let chartRequestToken = 0;
 
     // Client-side chart data cache: "symbol:period" -> {data, time}
     const chartCache = {};
@@ -50,6 +56,8 @@
                 chartFrequency = parseInt(s.chart_frequency, 10) || 3;
                 chartDuration = parseInt(s.chart_duration, 10) || 15;
                 imageDuration = parseInt(s.image_duration, 10) || 10;
+                mediaMuted = s.media_muted !== "false";
+                player.muted = mediaMuted;
                 displayCurrency = s.currency || "CAD";
 
                 // Build chart queue from per-metal settings
@@ -163,7 +171,7 @@
     }
 
     // ---- Admin control state ------------------------------------------------
-    let serverState = "stopped";  // last known state from /api/status
+    let serverState = "unknown";  // last known state from /api/status
     let lastSkipCounter = 0;
     let showingChart = false;
 
@@ -182,6 +190,7 @@
                 // Handle skip
                 if (s.skip_counter > lastSkipCounter) {
                     lastSkipCounter = s.skip_counter;
+                    serverState = s.state;
                     console.log("[Status] Skip detected, counter:", s.skip_counter);
                     if (showingChart) {
                         resumeAfterChart();
@@ -205,6 +214,8 @@
                     imagePlayer.removeAttribute("src");
                     if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
                     chartOverlay.style.display = "none";
+                    showingChart = false;
+                    chartRequestToken++;
                     if (chartDismissTimer) {
                         clearTimeout(chartDismissTimer);
                         chartDismissTimer = null;
@@ -225,15 +236,24 @@
                         console.warn("[Status] Play requested but playlist is empty");
                     }
                 } else if (s.state === "playing" && serverState === "paused") {
-                    if (!showingChart) {
+                    if (showingChart) {
+                        if (!chartDismissTimer) {
+                            chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
+                        }
+                    } else {
                         if (imagePlayer.style.display === "block") {
                             imageTimer = setTimeout(advanceToNext, imageDuration * 1000);
                         } else {
-                            player.play().catch(() => {});
+                            startVideoPlayback(0);
                         }
                     }
-                } else if (s.state === "paused" && serverState === "playing") {
-                    if (!showingChart) {
+                } else if (s.state === "paused" && serverState !== "paused") {
+                    if (showingChart) {
+                        if (chartDismissTimer) {
+                            clearTimeout(chartDismissTimer);
+                            chartDismissTimer = null;
+                        }
+                    } else {
                         if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
                         else { player.pause(); }
                     }
@@ -249,13 +269,14 @@
     // ---- Media playback (video + image) ------------------------------------
     function playCurrentVideo() {
         if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
+        if (recoveryTimer) { clearTimeout(recoveryTimer); recoveryTimer = null; }
 
         if (playlist.length === 0) {
             console.warn("[Player] No items in playlist");
             return;
         }
-        if (serverState === "stopped") {
-            console.log("[Player] Ignoring play — state is stopped");
+        if (serverState === "stopped" || serverState === "paused") {
+            console.log("[Player] Ignoring play — state is", serverState);
             return;
         }
 
@@ -284,22 +305,61 @@
             player.style.display = "none";
             imagePlayer.src = src;
             imagePlayer.style.display = "block";
-            consecutiveErrors = 0;
             imageTimer = setTimeout(advanceToNext, imageDuration * 1000);
         } else {
             imagePlayer.style.display = "none";
             imagePlayer.removeAttribute("src");
             player.style.display = "block";
+            player.muted = mediaMuted;
             player.src = src;
-            player.play().then(() => {
-                consecutiveErrors = 0;
-            }).catch(() => {
-                document.addEventListener("click", function once() {
-                    player.play();
-                    document.removeEventListener("click", once);
-                });
-            });
+            player.load();
+            lastVideoTime = -1;
+            lastProgressAt = Date.now();
+            startVideoPlayback(0);
         }
+    }
+
+    function startVideoPlayback(attempt) {
+        if (serverState === "stopped" || serverState === "paused") return;
+        player.play().then(() => {
+            lastProgressAt = Date.now();
+        }).catch(err => {
+            console.warn("[Player] Play rejected:", err && err.name ? err.name : err);
+            if (attempt < 1) {
+                setTimeout(function () { startVideoPlayback(attempt + 1); }, 750);
+            } else {
+                recoverFromMediaFailure("browser rejected playback");
+            }
+        });
+    }
+
+    function recoverFromMediaFailure(reason) {
+        if (recoveryTimer || playlist.length === 0 ||
+                serverState === "stopped" || serverState === "paused") return;
+
+        consecutiveErrors++;
+        console.error("[Player] Recovering from", reason,
+            "| Consecutive failures:", consecutiveErrors + "/" + playlist.length);
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+        player.style.display = "none";
+        imagePlayer.style.display = "none";
+        imagePlayer.removeAttribute("src");
+        if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
+
+        var fullPassFailed = consecutiveErrors >= playlist.length;
+        var delay = fullPassFailed ? 5000 : 500;
+        if (fullPassFailed) {
+            showSplash("Playback problem", "Retrying the playlist automatically…");
+        }
+
+        recoveryTimer = setTimeout(function () {
+            recoveryTimer = null;
+            if (serverState === "stopped" || playlist.length === 0) return;
+            currentIndex = (currentIndex + 1) % playlist.length;
+            playCurrentVideo();
+        }, delay);
     }
 
     function advanceToNext() {
@@ -322,9 +382,18 @@
     function showChartSlide() {
         if (chartQueue.length === 0) { advanceToNext(); return; }
 
+        // Charts are optional. Never interrupt local media if the CDN is down.
+        if (typeof Chart === "undefined") {
+            console.warn("[Charts] Chart.js unavailable, skipping slide");
+            currentIndex = (currentIndex + 1) % playlist.length;
+            playCurrentVideo();
+            return;
+        }
+
         const entry = chartQueue[chartQueueIndex % chartQueue.length];
         chartQueueIndex++;
         showingChart = true;
+        const requestToken = ++chartRequestToken;
 
         player.pause();
         player.style.display = "none";
@@ -335,17 +404,29 @@
         chartTitle.textContent = entry.name.toUpperCase() + " \u2014 " + entry.periodLabel + " Price (" + displayCurrency + ")";
         chartOverlay.style.display = "flex";
 
+        // The timer starts before the network request. A slow chart can never
+        // freeze the video rotation.
+        chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
+
         fetchChartData(entry.symbol, entry.period, function (data) {
+            if (!showingChart || requestToken !== chartRequestToken) return;
             if (!data) {
                 resumeAfterChart();
                 return;
             }
-            renderChart(data, entry);
-            chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
+            try {
+                renderChart(data, entry);
+            } catch (err) {
+                console.error("[Charts] Render failed:", err);
+                resumeAfterChart();
+            }
         });
     }
 
     function resumeAfterChart() {
+        if (!showingChart) return;
+        showingChart = false;
+        chartRequestToken++;
         if (chartDismissTimer) {
             clearTimeout(chartDismissTimer);
             chartDismissTimer = null;
@@ -355,6 +436,7 @@
             chartInstance = null;
         }
         chartOverlay.style.display = "none";
+        if (playlist.length === 0 || serverState !== "playing") return;
         currentIndex = (currentIndex + 1) % playlist.length;
         playCurrentVideo();
     }
@@ -367,7 +449,12 @@
             return;
         }
 
-        fetch("/api/chart-data/" + encodeURIComponent(symbol) + "?period=" + encodeURIComponent(period))
+        var controller = new AbortController();
+        var timeout = setTimeout(function () { controller.abort(); }, CHART_FETCH_TIMEOUT_MS);
+
+        fetch("/api/chart-data/" + encodeURIComponent(symbol) + "?period=" + encodeURIComponent(period), {
+            signal: controller.signal,
+        })
             .then(r => {
                 if (!r.ok) throw new Error(r.status);
                 return r.json();
@@ -380,7 +467,11 @@
                 chartCache[cacheKey] = { data: data, time: Date.now() };
                 cb(data);
             })
-            .catch(() => cb(null));
+            .catch(err => {
+                console.warn("[Charts] Data unavailable:", err && err.name ? err.name : err);
+                cb(null);
+            })
+            .finally(() => clearTimeout(timeout));
     }
 
     function renderChart(data, metal) {
@@ -448,48 +539,53 @@
     // ---- Events -----------------------------------------------------------
     player.addEventListener("ended", function () {
         console.log("[Player] Video ended, advancing");
+        consecutiveErrors = 0;
         advanceToNext();
     });
 
     player.addEventListener("error", function () {
         const src = player.getAttribute("src") || "unknown";
-        consecutiveErrors++;
-        console.error("[Player] Error loading:", src,
-            "| Consecutive errors:", consecutiveErrors + "/" + playlist.length);
+        recoverFromMediaFailure("video error: " + src);
+    });
 
-        if (consecutiveErrors >= playlist.length && playlist.length > 0) {
-            // Every video in the playlist failed — stop looping
-            console.error("[Player] All videos failed to load, showing error splash");
-            player.pause();
-            player.removeAttribute("src");
-            player.style.display = "none";
-            showSplash("Video playback error",
-                "All " + playlist.length + " video(s) failed to load — check files in /videos/");
-            consecutiveErrors = 0;
-            return;
+    player.addEventListener("timeupdate", function () {
+        if (player.currentTime > lastVideoTime + 0.05) {
+            lastVideoTime = player.currentTime;
+            lastProgressAt = Date.now();
         }
+    });
 
-        // Skip to next video after a brief delay
-        setTimeout(advanceToNext, 500);
+    player.addEventListener("waiting", function () {
+        console.warn("[Player] Waiting for video data");
+    });
+
+    player.addEventListener("stalled", function () {
+        console.warn("[Player] Browser reported a stalled video");
     });
 
     imagePlayer.addEventListener("error", function () {
         var src = imagePlayer.getAttribute("src") || "unknown";
-        consecutiveErrors++;
-        console.error("[Player] Image error:", src,
-            "| Consecutive errors:", consecutiveErrors + "/" + playlist.length);
         if (imageTimer) { clearTimeout(imageTimer); imageTimer = null; }
-
-        if (consecutiveErrors >= playlist.length && playlist.length > 0) {
-            console.error("[Player] All items failed to load");
-            imagePlayer.style.display = "none";
-            showSplash("Playback error",
-                "All " + playlist.length + " item(s) failed to load — check files in /videos/");
-            consecutiveErrors = 0;
-            return;
-        }
-        setTimeout(advanceToNext, 500);
+        recoverFromMediaFailure("image error: " + src);
     });
+
+    imagePlayer.addEventListener("load", function () {
+        consecutiveErrors = 0;
+    });
+
+    // Some decoder/network failures fire neither ended nor error. Detect a
+    // video whose clock has stopped and move on without human intervention.
+    setInterval(function () {
+        if (serverState !== "playing" || showingChart ||
+                player.style.display !== "block" || player.ended) return;
+
+        if (player.currentTime > lastVideoTime + 0.05) {
+            lastVideoTime = player.currentTime;
+            lastProgressAt = Date.now();
+        } else if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+            recoverFromMediaFailure("no playback progress for 15 seconds");
+        }
+    }, 5000);
 
     // ---- Init & polling ---------------------------------------------------
     fetchChartSettings();

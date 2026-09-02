@@ -1,7 +1,7 @@
 """Price fetcher — yfinance integration with caching and fallback."""
 
-import sqlite3
 import logging
+import sqlite3
 import threading
 from datetime import datetime
 
@@ -46,6 +46,7 @@ def fetch_and_store(db_path):
             group_by='ticker',
             progress=False,
             threads=True,
+            timeout=10,
         )
 
         if data.empty:
@@ -128,7 +129,7 @@ def fetch_and_store(db_path):
             _last_error = None
 
         logger.info(
-            f'Prices updated: '
+            'Prices updated: '
             + ', '.join(f"{r['name']}=${r['price_cad']:.2f}CAD" for r in results)
             + f' (USD/CAD={usd_cad:.4f}, USD/EUR={usd_eur:.4f})'
         )

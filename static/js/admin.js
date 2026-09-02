@@ -311,6 +311,7 @@
     const setChartFrequency  = document.getElementById("set-chart-frequency");
     const setChartDuration   = document.getElementById("set-chart-duration");
     const setImageDuration   = document.getElementById("set-image-duration");
+    const setMediaMuted      = document.getElementById("set-media-muted");
     const setDisplayMonitor  = document.getElementById("set-display-monitor");
     const setAutoStart       = document.getElementById("set-auto-start");
     const chartMetalsTable   = document.getElementById("chart-metals-table");
@@ -440,10 +441,12 @@
                 setImageDuration.value = s.image_duration || "10";
                 document.getElementById("imgdur-val").textContent = setImageDuration.value;
 
+                setMediaMuted.checked = s.media_muted !== "false";
+
                 savedMonitorIndex = s.display_monitor || "1";
                 setDisplayMonitor.value = savedMonitorIndex;
 
-                setAutoStart.checked = s.auto_start === "true";
+                setAutoStart.checked = s.auto_launch_display !== "false";
             })
             .catch(() => showToast("Failed to load settings", "danger"));
     }
@@ -459,8 +462,9 @@
             chart_frequency:  setChartFrequency.value,
             chart_duration:   setChartDuration.value,
             image_duration:   setImageDuration.value,
+            media_muted:      setMediaMuted.checked ? "true" : "false",
             display_monitor:  setDisplayMonitor.value,
-            auto_start:       setAutoStart.checked ? "true" : "false",
+            auto_launch_display: setAutoStart.checked ? "true" : "false",
         };
 
         const btn = this;

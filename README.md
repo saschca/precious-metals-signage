@@ -27,8 +27,10 @@ A full-screen signage display for a second monitor (or TV) that loops your promo
 - Chart.js price charts with configurable metals and time ranges
 - Multi-currency display: CAD, USD, EUR
 - Smart monitor picker with "Identify" flash
-- Chrome kiosk auto-launch on selected monitor
-- Single-instance guard (port check + lockfile)
+- Isolated Chrome/Edge kiosk auto-launch on the selected monitor
+- Automatic recovery from stalled or unplayable media
+- Windows single-instance mutex and scheduled-start installer
+- Offline-safe chart timeout: online data cannot stop local videos
 - SQLite database — zero configuration
 - PyInstaller `.exe` packaging for Windows
 
@@ -36,7 +38,7 @@ A full-screen signage display for a second monitor (or TV) that loops your promo
 
 | Layer | Tech |
 |-------|------|
-| Backend | Python 3, Flask, APScheduler |
+| Backend | Python 3, Flask, Waitress, APScheduler |
 | Database | SQLite |
 | Pricing | yfinance (Yahoo Finance) |
 | Frontend | Bootstrap 5, Chart.js, SortableJS |
@@ -44,13 +46,16 @@ A full-screen signage display for a second monitor (or TV) that loops your promo
 
 ## Quick Start (Windows .exe)
 
-1. Download `PreciousMetalsSignage.exe` from [Releases](https://github.com/saschca/precious-metals-signage/releases)
-2. Place it in a folder, create a `videos/` subfolder, drop in your `.mp4` / `.jpg` / `.png` files
-3. Double-click the exe
-4. Open `http://localhost:5000/admin` in your browser
-5. Add videos to the playlist, hit Play, click Launch Display
+1. Download the Windows zip from [Releases](https://github.com/saschca/precious-metals-signage/releases) and extract the entire folder to a permanent location.
+2. Put `.mp4`, `.jpg`, or `.png` files in the included `videos/` folder.
+3. Double-click `PreciousMetalsSignage-vX.Y.Z.exe`.
+4. Open `http://localhost:5000/admin`, identify the monitors, and select the showroom display.
+5. Add the media to the playlist. Playback and the display window start automatically.
+6. Double-click `windows/install-startup.cmd` once to start signage automatically after Windows logon.
 
-That's it. Prices load automatically. No Python, no API keys, no config files needed.
+The Windows task waits 20 seconds for the desktop and displays to initialize, refuses duplicate starts, and restarts the app after a failure. Windows must log into a user account before a visible browser window can open.
+
+To remove automatic startup, run `windows/uninstall-startup.cmd`.
 
 ## Running from Source
 
@@ -61,27 +66,13 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://localhost:5000/admin` in your browser.
+The display launches automatically after the local health check passes. Open `http://localhost:5000/admin` to manage it.
 
 ## Building the .exe
 
-```bash
-pip install pyinstaller
-pyinstaller --onefile --noconsole ^
-    --add-data "templates;templates" ^
-    --add-data "static;static" ^
-    --hidden-import=yfinance ^
-    --hidden-import=apscheduler ^
-    --hidden-import=apscheduler.schedulers.background ^
-    --hidden-import=apscheduler.triggers.interval ^
-    --hidden-import=apscheduler.executors.pool ^
-    --hidden-import=apscheduler.jobstores.memory ^
-    --hidden-import=screeninfo ^
-    --name "PreciousMetalsSignage" ^
-    app.py
-```
+Run `build.bat` on Windows. It creates a versioned EXE and copies the startup scripts, README, VERSION, and empty media folder into `dist/`.
 
-Output: `dist/PreciousMetalsSignage.exe`
+GitHub Actions also tests the application and produces a ready-to-deploy Windows zip. A `vX.Y.Z` tag publishes that zip as a GitHub release.
 
 ## Accessing from the Network
 
@@ -94,14 +85,14 @@ http://192.168.x.x:5000/display  # open display on any screen
 
 ## Configuration
 
-A `config.json` is auto-created on first run. Defaults:
+An optional `config.json` can override these defaults:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `flask_port` | `5000` | Server port |
 | `display.video_formats` | `.mp4, .webm, .mov` | Accepted video file types |
 
-All other settings (ticker, charts, monitor, currency) are managed from the admin panel and stored in `signage.db`.
+All other settings, including ticker, charts, monitor, currency, and display auto-launch, are managed from the admin panel and stored in `signage.db`.
 
 ## Project Structure
 
@@ -119,8 +110,10 @@ static/
   css/admin.css         # Admin styles
   css/display.css       # Display styles
 videos/                 # Drop your video files here
+windows/                # Install/remove Windows logon task
+tests/                  # Reliability tests
 VERSION                 # Semantic version
-config.json             # Auto-generated config (gitignored)
+config.json             # Optional port configuration (gitignored)
 signage.db              # SQLite database (gitignored)
 ```
 
