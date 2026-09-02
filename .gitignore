@@ -3,6 +3,7 @@ signage.db
 signage.log
 config.json
 .signage.lock
+signage-browser-profile/
 .env
 
 # Media files

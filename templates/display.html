@@ -6,14 +6,13 @@
     <title>Precious Metals Display</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23FFD700' stroke='%23B8860B' stroke-width='4'/></svg>">
     <link rel="stylesheet" href="/static/css/display.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div id="splash">
         <div class="splash-text">No videos loaded</div>
         <div class="splash-sub">Add videos via the admin panel</div>
     </div>
-    <video id="player" autoplay></video>
+    <video id="player" autoplay muted playsinline preload="auto"></video>
     <img id="image-player" alt="">
 
     <div id="chart-overlay">
@@ -29,5 +28,6 @@
     </div>
 
     <script src="/static/js/display.js"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </body>
 </html>
