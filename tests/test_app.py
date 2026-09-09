@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import app as signage
 
@@ -46,6 +47,53 @@ class SignageAppTests(unittest.TestCase):
     def test_media_route_does_not_leave_video_directory(self):
         response = self.client.get('/videos/%2e%2e/app.py')
         self.assertEqual(response.status_code, 404)
+
+
+
+class DisplayPositionTests(unittest.TestCase):
+    """A window placed outside every monitor still exists and still appears in
+    the taskbar, but is invisible on every physical screen and cannot be
+    dragged back. An unverifiable position must never be used."""
+
+    MONITORS = [
+        {'index': 0, 'name': 'Primary', 'width': 2560, 'height': 1440, 'x': 0, 'y': 0},
+        {'index': 1, 'name': 'Showroom', 'width': 1920, 'height': 1080, 'x': 2560, 'y': 0},
+    ]
+
+    def test_selected_monitor_geometry_is_used(self):
+        with mock.patch.object(signage, '_get_monitor_list', return_value=self.MONITORS):
+            self.assertEqual(signage.resolve_display_position(1), (2560, 0, 1920, 1080))
+
+    def test_monitor_left_of_primary_keeps_negative_offset(self):
+        monitors = [
+            {'index': 0, 'name': 'Left', 'width': 1920, 'height': 1080, 'x': -1920, 'y': 0},
+            {'index': 1, 'name': 'Primary', 'width': 1920, 'height': 1080, 'x': 0, 'y': 0},
+        ]
+        with mock.patch.object(signage, '_get_monitor_list', return_value=monitors):
+            self.assertEqual(signage.resolve_display_position(0), (-1920, 0, 1920, 1080))
+
+    def test_stale_monitor_index_falls_back_to_a_real_monitor(self):
+        with mock.patch.object(signage, '_get_monitor_list', return_value=self.MONITORS):
+            x, y, _w, _h = signage.resolve_display_position(5)
+
+        self.assertEqual((x, y), (0, 0))
+
+    def test_undetectable_monitors_use_the_primary_not_a_guess(self):
+        """The old code guessed 1920,0, which lands off-screen unless the
+        primary happens to be exactly 1920 wide with a monitor to its right."""
+        with mock.patch.object(signage, '_get_monitor_list', return_value=None):
+            self.assertEqual(signage.resolve_display_position(1), (0, 0, None, None))
+
+    def test_resolved_position_always_lands_on_a_detected_monitor(self):
+        with mock.patch.object(signage, '_get_monitor_list', return_value=self.MONITORS):
+            for idx in (-1, 0, 1, 2, 99):
+                x, y, _w, _h = signage.resolve_display_position(idx)
+                on_screen = any(
+                    m['x'] <= x < m['x'] + m['width'] and
+                    m['y'] <= y < m['y'] + m['height']
+                    for m in self.MONITORS
+                )
+                self.assertTrue(on_screen, f'index {idx} resolved off-screen to {x},{y}')
 
 
 if __name__ == '__main__':

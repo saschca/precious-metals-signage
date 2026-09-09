@@ -496,12 +496,14 @@
             })
             .then(data => {
                 const monitor = parseInt(setDisplayMonitor.value, 10) + 1;
+                const at = (data && typeof data.x === "number")
+                    ? " at " + data.x + "," + data.y : "";
                 if (data && data.result === "already-running") {
                     // The window was left where it already was, so don't claim
                     // it just appeared on the selected monitor.
                     showToast("Signage browser was already open — left in place", "warning");
                 } else {
-                    showToast("Display launched on Monitor " + monitor, "success");
+                    showToast("Display launched on Monitor " + monitor + at, "success");
                 }
                 btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Launched!';
                 setTimeout(() => {
