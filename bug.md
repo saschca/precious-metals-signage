@@ -6,6 +6,7 @@ _(none)_
 
 ## Changelog
 
+- **v1.4.1** (2026-09-09) — Playback fix: pressing Play in the admin panel now starts an already-open display immediately instead of leaving it on the "press Play in admin" splash; resuming from pause works again; a display opened while playback is already running starts on its own; an empty playlist at play time refetches at once rather than waiting for the 30-second poll; added Node regression tests for the display state machine
 - **v1.4.0** (2026-09-02) — Reliability release: early Windows mutex prevents piled-up instances; initial prices fetch in the background; display waits for server health and auto-launches in a dedicated Chrome/Edge profile; playback starts automatically and muted; 15-second media-stall watchdog; failed playlists retry instead of stopping permanently; chart requests have browser/backend timeouts and cannot freeze the loop; Flask handles safe conditional/range media delivery; Windows Task Scheduler installer starts once at logon and restarts after failure; automated Linux tests and Windows package builds added
 - **v1.3.1** (2026-04-03) — Build: build.bat reads VERSION file automatically, exe filename includes version (PreciousMetalsSignage-vX.Y.Z.exe), VERSION bundled into exe
 - **v1.3.0** (2026-04-03) — Image slide support: playlist now accepts .jpg/.jpeg/.png/.webp/.gif alongside videos; images display fullscreen for a configurable duration (default 10s) then advance; admin shows video/image icons in playlist; new "Image display" duration slider in Display settings
@@ -14,6 +15,7 @@ _(none)_
 
 ## Fixed Bugs
 
+- [x] **2026-09-09** — Pressing Play in the admin panel did nothing on the already-open signage display; it stayed on the "press Play in admin" splash, while a newly opened tab played immediately *(fixed v1.4.1: `pollStatus()` committed the new server state **after** running its transition handlers, so `playCurrentVideo()` and `startVideoPlayback()` still saw the stale `"stopped"`/`"paused"` value and returned early — the play command was swallowed and no later poll retried it, since state then matched. The new state is now committed before the handlers run and the branches compare against a captured `prevState`. Also: the start branch now covers the initial `"unknown"` state, and `fetchPlaylist()` only auto-starts on a confirmed `"playing"` state instead of any non-stopped state, which had briefly started a video that the next poll immediately tore down)*
 - [x] **2026-09-02** — Hung/reopened application instances could pile up until Windows restarted *(fixed v1.4.0: OS mutex is acquired before heavyweight imports; scheduled task ignores duplicate starts)*
 - [x] **2026-09-02** — Online chart request or a stalled decoder could stop the rotation indefinitely *(fixed v1.4.0: bounded requests, fail-safe chart dismissal, no-progress watchdog, automatic playlist retry)*
 - [x] **2026-09-02** — Auto-start checkbox did not perform any startup action and every launch reset playback to stopped *(fixed v1.4.0: auto-launch is implemented, playback defaults to playing, Windows logon-task installer included)*

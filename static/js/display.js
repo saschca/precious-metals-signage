@@ -144,7 +144,11 @@
 
                 playlist = playable;
 
-                if (currentIndex === -1 && serverState !== "stopped") {
+                // Only auto-start on a confirmed "playing" state. The old
+                // `!== "stopped"` test also matched the initial "unknown" and
+                // "paused" states, so a display could briefly start a video
+                // that the very next status poll then tore straight back down.
+                if (currentIndex === -1 && serverState === "playing") {
                     console.log("[Playlist] Starting playback at index 0");
                     currentIndex = 0;
                     playCurrentVideo();
@@ -200,13 +204,23 @@
                     return;
                 }
 
-                // Handle state transitions
-                if (s.state !== serverState) {
-                    console.log("[Status] State change:", serverState, "->", s.state,
+                // Handle state transitions.
+                //
+                // The new state is committed BEFORE the branches run. The
+                // handlers below call playCurrentVideo()/startVideoPlayback(),
+                // which refuse to start while serverState is "stopped" or
+                // "paused". Committing afterwards left the old state in place
+                // during the call, so the play command was swallowed and the
+                // display sat on the splash until the next playlist poll.
+                const prevState = serverState;
+                serverState = s.state;
+
+                if (s.state !== prevState) {
+                    console.log("[Status] State change:", prevState, "->", s.state,
                         "| Playlist:", playlist.length, "| Index:", currentIndex);
                 }
 
-                if (s.state === "stopped" && serverState !== "stopped") {
+                if (s.state === "stopped" && prevState !== "stopped") {
                     player.pause();
                     player.removeAttribute("src");
                     player.style.display = "none";
@@ -227,15 +241,22 @@
                     }
                     currentIndex = -1;
                     reportVideo(null);
-                } else if (s.state === "playing" && serverState === "stopped") {
+                } else if (s.state === "playing" && prevState !== "playing" &&
+                           prevState !== "paused") {
+                    // Covers "stopped" and the initial "unknown" state, so a
+                    // display opened while playback is already running starts
+                    // on its own instead of waiting for a state change that
+                    // never comes.
                     if (playlist.length > 0) {
-                        console.log("[Status] Starting playback from stopped state");
+                        console.log("[Status] Starting playback from", prevState, "state");
                         if (currentIndex === -1) currentIndex = 0;
                         playCurrentVideo();
                     } else {
-                        console.warn("[Status] Play requested but playlist is empty");
+                        // Don't wait up to 30s for the next scheduled poll.
+                        console.warn("[Status] Play requested but playlist is empty — refetching");
+                        fetchPlaylist();
                     }
-                } else if (s.state === "playing" && serverState === "paused") {
+                } else if (s.state === "playing" && prevState === "paused") {
                     if (showingChart) {
                         if (!chartDismissTimer) {
                             chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
@@ -247,7 +268,7 @@
                             startVideoPlayback(0);
                         }
                     }
-                } else if (s.state === "paused" && serverState !== "paused") {
+                } else if (s.state === "paused" && prevState !== "paused") {
                     if (showingChart) {
                         if (chartDismissTimer) {
                             clearTimeout(chartDismissTimer);
@@ -258,8 +279,6 @@
                         else { player.pause(); }
                     }
                 }
-
-                serverState = s.state;
             })
             .catch(err => {
                 console.error("[Status] Poll failed:", err);
