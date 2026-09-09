@@ -492,7 +492,17 @@
         post("/api/launch-display")
             .then(r => {
                 if (!r.ok) throw new Error();
-                showToast("Display launched on Monitor " + (parseInt(setDisplayMonitor.value, 10) + 1), "success");
+                return r.json().catch(() => ({}));
+            })
+            .then(data => {
+                const monitor = parseInt(setDisplayMonitor.value, 10) + 1;
+                if (data && data.result === "already-running") {
+                    // The window was left where it already was, so don't claim
+                    // it just appeared on the selected monitor.
+                    showToast("Signage browser was already open — left in place", "warning");
+                } else {
+                    showToast("Display launched on Monitor " + monitor, "success");
+                }
                 btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Launched!';
                 setTimeout(() => {
                     btn.innerHTML = '<i class="bi bi-box-arrow-up-right me-1"></i>Launch Display';

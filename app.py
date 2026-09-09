@@ -62,7 +62,9 @@ from flask import (
 from waitress import serve
 
 from utils.price_fetcher import fetch_and_store, get_failure_status
-from utils.system_utils import launch_chrome_kiosk
+from utils.system_utils import (
+    ALREADY_RUNNING, FAILED, LAUNCHED, launch_chrome_kiosk,
+)
 
 try:
     from screeninfo import get_monitors
@@ -592,33 +594,57 @@ def api_settings_update():
 def api_launch_display():
     port = config.get('flask_port', 5000)
 
-    if launch_saved_display(port):
-        return jsonify({'status': 'ok'})
-    return jsonify({'error': 'failed to launch browser'}), 500
+    # Pressing the button is an explicit request for a window on the selected
+    # monitor, so any existing signage browser is closed and reopened. Reporting
+    # "ok" while silently leaving an old window where it was is what made a
+    # misplaced display look like a successful launch.
+    result = launch_saved_display(port, force=True)
+
+    if result == FAILED:
+        return jsonify({'error': 'failed to launch browser'}), 500
+    return jsonify({'status': 'ok', 'result': result})
 
 
-def launch_saved_display(port):
+def launch_saved_display(port, force=False):
     """Launch the display using the monitor currently selected in settings."""
 
     # Look up selected monitor's position
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key = 'display_monitor'").fetchone()
     conn.close()
-    monitor_idx = int(row['value']) if row else 1
+    try:
+        monitor_idx = int(row['value']) if row else 1
+    except (TypeError, ValueError):
+        monitor_idx = 1
 
+    width = height = None
     monitors = _get_monitor_list()
     if monitors and 0 <= monitor_idx < len(monitors):
         m = monitors[monitor_idx]
         offset_x, offset_y = m['x'], m['y']
+        width, height = m['width'], m['height']
     else:
-        # Fallback: assume second monitor is to the right
+        # Fallback: assume a second monitor sits to the right of a 1920-wide
+        # primary. This is a guess — say so, because a wrong guess puts the
+        # window off-screen or back on the primary display.
         offset_x, offset_y = 1920, 0
+        if monitors:
+            logger.warning(
+                'Saved monitor index %s is out of range (%s monitor(s) detected); '
+                'falling back to %s,%s', monitor_idx, len(monitors), offset_x, offset_y)
+        else:
+            logger.warning(
+                'Monitor detection unavailable; falling back to %s,%s',
+                offset_x, offset_y)
 
     return launch_chrome_kiosk(
         port,
         offset_x,
         offset_y,
         profile_dir=BROWSER_PROFILE_DIR,
+        width=width,
+        height=height,
+        force=force,
     )
 
 # --- API: Status & Control -------------------------------------------------
@@ -773,7 +799,15 @@ def auto_launch_when_ready(port):
     ).fetchone()
     conn.close()
     if row and row['value'] == 'true':
-        launch_saved_display(port)
+        # Automatic start-up leaves a healthy browser alone; only the admin
+        # button forces a relaunch.
+        result = launch_saved_display(port)
+        if result == LAUNCHED:
+            logger.info('Display launched automatically')
+        elif result == ALREADY_RUNNING:
+            logger.info('Display already running; left in place')
+        else:
+            logger.error('Automatic display launch failed')
 
 # ---------------------------------------------------------------------------
 # Entry point
