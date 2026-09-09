@@ -153,9 +153,16 @@
                     currentIndex = 0;
                     playCurrentVideo();
                 } else if (currentIndex === -1) {
-                    // Playlist loaded but waiting for play command
-                    console.log("[Playlist] Loaded but state is stopped — waiting for play");
-                    showSplash("Ready", playlist.length + " video(s) — press Play in admin");
+                    // Only tell the operator to press Play when pressing Play
+                    // is actually what is needed. Saying it while the server
+                    // already reports "playing" sends them after a button that
+                    // cannot change anything.
+                    console.log("[Playlist] Loaded, waiting for state:", serverState);
+                    if (serverState === "stopped") {
+                        showSplash("Ready", playlist.length + " video(s) — press Play in admin");
+                    } else {
+                        showSplash("Starting…", playlist.length + " video(s) loaded");
+                    }
                 } else if (oldNames !== newNames) {
                     console.log("[Playlist] Playlist changed, re-syncing index");
                     const currentFile = player.getAttribute("src")
@@ -604,6 +611,24 @@
         } else if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
             recoverFromMediaFailure("no playback progress for 15 seconds");
         }
+    }, 5000);
+
+    // A splash screen while the server reports "playing" is a dead end: it
+    // tells the operator to press Play, but the server already thinks it is
+    // playing, so no state transition will ever arrive to start the rotation.
+    // Whatever caused it — a missed transition, a failed first start, a stale
+    // cached script — recover instead of waiting for someone to notice.
+    setInterval(function () {
+        if (serverState !== "playing" || showingChart) return;
+        if (playlist.length === 0) return;
+        if (recoveryTimer) return;
+        // The splash is only ever visible when nothing is being shown, so this
+        // cannot fire over a video that is merely buffering.
+        if (splash.style.display === "none") return;
+
+        console.warn("[Watchdog] Server is playing but the splash is up — starting playback");
+        if (currentIndex === -1) currentIndex = 0;
+        playCurrentVideo();
     }, 5000);
 
     // ---- Init & polling ---------------------------------------------------

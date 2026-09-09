@@ -115,7 +115,12 @@ function createHarness(options) {
         timer.fn();
     }
 
-    return { elements, state, flush, pollStatusAgain };
+    // Fire every 5s watchdog tick (stall detection and splash recovery).
+    function tickWatchdogs() {
+        state.timers.filter(t => t.ms === 5000).forEach(t => t.fn());
+    }
+
+    return { elements, state, flush, pollStatusAgain, tickWatchdogs };
 }
 
 const PLAYLIST = [
@@ -193,12 +198,62 @@ async function testStoppedStaysStopped() {
         "stop must show the splash screen");
 }
 
+// The exact state seen on site: server reports "playing", the display sits on
+// a splash telling the operator to press Play. No transition will ever arrive,
+// so the watchdog has to break the deadlock on its own.
+async function testWatchdogRescuesSplashWhilePlaying() {
+    const h = createHarness({
+        initialStatus: { state: "stopped", skip_counter: 0 },
+        playlist: PLAYLIST,
+    });
+    await h.flush();
+    assert.strictEqual(h.elements.splash.style.display, "flex", "expected the splash");
+
+    // Server flips to playing, but the display misses the transition entirely
+    // (simulated here by never polling status again).
+    h.state.status = { state: "playing", skip_counter: 0 };
+    h.tickWatchdogs();
+    await h.flush();
+    assert.strictEqual(h.elements.player.playCalls, 0,
+        "watchdog must not fire while the display still believes it is stopped");
+
+    // One status poll lands, so serverState is "playing" — but suppose the
+    // start attempt did not take. The splash is still up.
+    h.pollStatusAgain();
+    await h.flush();
+    h.elements.splash.style.display = "flex";
+    const before = h.elements.player.playCalls;
+
+    h.tickWatchdogs();
+    await h.flush();
+
+    assert.ok(h.elements.player.playCalls > before,
+        "watchdog must start playback when the splash is up during 'playing'");
+}
+
+async function testWatchdogLeavesAStoppedDisplayAlone() {
+    const h = createHarness({
+        initialStatus: { state: "stopped", skip_counter: 0 },
+        playlist: PLAYLIST,
+    });
+    await h.flush();
+
+    h.tickWatchdogs();
+    h.tickWatchdogs();
+    await h.flush();
+
+    assert.strictEqual(h.elements.player.playCalls, 0,
+        "a deliberately stopped display must stay stopped");
+}
+
 async function main() {
     const tests = [
         ["play after stop is honoured", testPlayAfterStopIsHonoured],
         ["display opened while already playing", testDisplayOpenedWhileAlreadyPlaying],
         ["resume from pause", testResumeFromPause],
         ["stop returns to splash", testStoppedStaysStopped],
+        ["watchdog rescues splash while playing", testWatchdogRescuesSplashWhilePlaying],
+        ["watchdog leaves a stopped display alone", testWatchdogLeavesAStoppedDisplayAlone],
     ];
 
     let failed = 0;

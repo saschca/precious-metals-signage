@@ -83,8 +83,12 @@
         fetch("/api/status")
             .then(r => r.json())
             .then(s => {
-                const video = s.current_video || "Stopped";
-                nowLabel.textContent = video;
+                // "Stopped" while the state badge reads "playing" is a
+                // contradiction. No reported video during playback means the
+                // display has not started yet, not that playback is stopped.
+                nowLabel.textContent = s.current_video
+                    || (s.state === "playing" ? "Waiting for display…"
+                        : s.state === "paused" ? "Paused" : "Stopped");
 
                 nowState.textContent = s.state;
                 nowState.className = "badge ms-2 bg-"
