@@ -222,6 +222,38 @@ def admin():
 def api_health():
     return jsonify({'status': 'ok', 'version': APP_VERSION})
 
+@app.route('/api/network')
+def api_network():
+    """LAN addresses this machine can be reached on.
+
+    The server listens on every interface, so the admin panel can tell the
+    operator which URL to open on a phone or tablet instead of leaving them to
+    hunt through ipconfig for it.
+    """
+    port = config.get('flask_port', 5000)
+    addresses = []
+
+    try:
+        # Connecting a UDP socket assigns a local address without sending
+        # anything, which picks the interface used for outbound traffic —
+        # the one other devices on the LAN will reach.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.settimeout(0.2)
+            probe.connect(('192.168.1.1', 1))
+            addresses.append(probe.getsockname()[0])
+    except Exception:
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addr = info[4][0]
+            if not addr.startswith(('127.', '169.254.')) and addr not in addresses:
+                addresses.append(addr)
+    except Exception as e:
+        logger.warning('Could not resolve local addresses: %s', e)
+
+    return jsonify({'port': port, 'addresses': addresses})
+
 # --- API: Playlist ---------------------------------------------------------
 @app.route('/api/playlist')
 def api_playlist():

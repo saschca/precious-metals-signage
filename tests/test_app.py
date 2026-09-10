@@ -96,5 +96,32 @@ class DisplayPositionTests(unittest.TestCase):
                 self.assertTrue(on_screen, f'index {idx} resolved off-screen to {x},{y}')
 
 
+class NetworkInfoTests(unittest.TestCase):
+    """The admin panel reports these URLs, so they must never be loopback —
+    an operator typing 127.0.0.1 into a phone reaches the phone."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        signage.DB_PATH = os.path.join(self.temp_dir.name, 'signage.db')
+        signage.init_db()
+        self.client = signage.app.test_client()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_reports_port_and_non_loopback_addresses(self):
+        response = self.client.get('/api/network')
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.get_json()
+        self.assertEqual(payload['port'], 5000)
+        self.assertIsInstance(payload['addresses'], list)
+        for address in payload['addresses']:
+            self.assertFalse(address.startswith('127.'),
+                             f'loopback address reported: {address}')
+            self.assertFalse(address.startswith('169.254.'),
+                             f'link-local address reported: {address}')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -76,12 +76,32 @@ GitHub Actions also tests the application and produces a ready-to-deploy Windows
 
 ## Accessing from the Network
 
-The admin panel and display work from any device on your LAN. Find your PC's IP (`ipconfig`) and open:
+The server listens on every interface, so the admin panel and display work from
+any device on your LAN.
+
+**Windows blocks this by default.** Double-click `windows/allow-network-access.cmd`
+once and approve the administrator prompt. It opens the port on *private*
+networks only, prints the exact URLs to use, and warns you if Windows has the
+network classified as Public (in which case the rule will not apply until you
+change it under Settings > Network & Internet).
+
+The admin panel's **System** card shows the addresses this machine is reachable
+on, so there is no need to run `ipconfig`:
 
 ```
 http://192.168.x.x:5000/admin    # manage from phone/tablet
 http://192.168.x.x:5000/display  # open display on any screen
 ```
+
+Set a static IP or a DHCP reservation on the router, or the address will change
+and your bookmark will break.
+
+To close the port again, run `windows/block-network-access.cmd`.
+
+> **The admin panel has no password.** Anyone who can reach the address can
+> control the signage. That is usually fine on a trusted shop network, but do
+> not forward this port through the router, and keep the signage PC off any
+> subnet shared with guest Wi-Fi.
 
 ## Configuration
 
@@ -110,7 +130,7 @@ static/
   css/admin.css         # Admin styles
   css/display.css       # Display styles
 videos/                 # Drop your video files here
-windows/                # Install/remove Windows logon task
+windows/                # Logon task + firewall helper scripts
 tests/                  # Reliability tests
 VERSION                 # Semantic version
 config.json             # Optional port configuration (gitignored)

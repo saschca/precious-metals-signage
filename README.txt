@@ -21,6 +21,15 @@ ADDING NEW VIDEOS:
 2. They will appear in the admin panel under "Available Videos"
 3. Click "Add" to include them in the playlist
 
+NETWORK ACCESS (phone/tablet):
+- Double-click windows/allow-network-access.cmd once and approve the prompt
+- It opens the port on private networks only and prints the URLs to use
+- The admin panel's System card also shows the address
+- Reserve the PC's IP on your router so the address does not change
+- There is no password on the admin panel; keep it off guest Wi-Fi and never
+  forward this port through the router
+- To close the port again, run windows/block-network-access.cmd
+
 MONITOR SETUP:
 - Use Identify in the admin panel, select the showroom monitor, and save
 - The signage browser uses a separate profile from normal office Chrome
@@ -37,4 +46,4 @@ FILES:
 - signage.db                  Database (auto-created on first run)
 - signage.log                 Log file (auto-created on first run)
 - videos/                     Place media files here
-- windows/                    Automatic startup installer/remover
+- windows/                    Startup installer + firewall helpers
