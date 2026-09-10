@@ -490,6 +490,29 @@
     });
 
     // Launch display on Monitor 2 via Chrome kiosk
+    // Show the LAN URLs so the operator does not have to dig through ipconfig
+    // to find out what to type on a phone or tablet.
+    function loadNetworkInfo() {
+        const box = document.getElementById("sys-network");
+        if (!box) return;
+        fetch("/api/network")
+            .then(r => r.json())
+            .then(d => {
+                if (!d.addresses || d.addresses.length === 0) {
+                    box.textContent = "No network address detected";
+                    return;
+                }
+                box.innerHTML = d.addresses.map(function (a) {
+                    const url = "http://" + a + ":" + d.port + "/admin";
+                    return '<div><a href="' + url + '" target="_blank">' + url + "</a></div>";
+                }).join("")
+                    + '<div class="mt-1">Blocked from other devices? Run '
+                    + "<code>windows/allow-network-access.cmd</code> once.</div>";
+            })
+            .catch(() => { box.textContent = "—"; });
+    }
+    loadNetworkInfo();
+
     document.getElementById("btn-launch-display").addEventListener("click", function () {
         const btn = this;
         btn.disabled = true;
