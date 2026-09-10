@@ -144,14 +144,25 @@
 
                 playlist = playable;
 
-                if (currentIndex === -1 && serverState !== "stopped") {
+                // Only auto-start on a confirmed "playing" state. The old
+                // `!== "stopped"` test also matched the initial "unknown" and
+                // "paused" states, so a display could briefly start a video
+                // that the very next status poll then tore straight back down.
+                if (currentIndex === -1 && serverState === "playing") {
                     console.log("[Playlist] Starting playback at index 0");
                     currentIndex = 0;
                     playCurrentVideo();
                 } else if (currentIndex === -1) {
-                    // Playlist loaded but waiting for play command
-                    console.log("[Playlist] Loaded but state is stopped — waiting for play");
-                    showSplash("Ready", playlist.length + " video(s) — press Play in admin");
+                    // Only tell the operator to press Play when pressing Play
+                    // is actually what is needed. Saying it while the server
+                    // already reports "playing" sends them after a button that
+                    // cannot change anything.
+                    console.log("[Playlist] Loaded, waiting for state:", serverState);
+                    if (serverState === "stopped") {
+                        showSplash("Ready", playlist.length + " video(s) — press Play in admin");
+                    } else {
+                        showSplash("Starting…", playlist.length + " video(s) loaded");
+                    }
                 } else if (oldNames !== newNames) {
                     console.log("[Playlist] Playlist changed, re-syncing index");
                     const currentFile = player.getAttribute("src")
@@ -200,13 +211,23 @@
                     return;
                 }
 
-                // Handle state transitions
-                if (s.state !== serverState) {
-                    console.log("[Status] State change:", serverState, "->", s.state,
+                // Handle state transitions.
+                //
+                // The new state is committed BEFORE the branches run. The
+                // handlers below call playCurrentVideo()/startVideoPlayback(),
+                // which refuse to start while serverState is "stopped" or
+                // "paused". Committing afterwards left the old state in place
+                // during the call, so the play command was swallowed and the
+                // display sat on the splash until the next playlist poll.
+                const prevState = serverState;
+                serverState = s.state;
+
+                if (s.state !== prevState) {
+                    console.log("[Status] State change:", prevState, "->", s.state,
                         "| Playlist:", playlist.length, "| Index:", currentIndex);
                 }
 
-                if (s.state === "stopped" && serverState !== "stopped") {
+                if (s.state === "stopped" && prevState !== "stopped") {
                     player.pause();
                     player.removeAttribute("src");
                     player.style.display = "none";
@@ -227,15 +248,22 @@
                     }
                     currentIndex = -1;
                     reportVideo(null);
-                } else if (s.state === "playing" && serverState === "stopped") {
+                } else if (s.state === "playing" && prevState !== "playing" &&
+                           prevState !== "paused") {
+                    // Covers "stopped" and the initial "unknown" state, so a
+                    // display opened while playback is already running starts
+                    // on its own instead of waiting for a state change that
+                    // never comes.
                     if (playlist.length > 0) {
-                        console.log("[Status] Starting playback from stopped state");
+                        console.log("[Status] Starting playback from", prevState, "state");
                         if (currentIndex === -1) currentIndex = 0;
                         playCurrentVideo();
                     } else {
-                        console.warn("[Status] Play requested but playlist is empty");
+                        // Don't wait up to 30s for the next scheduled poll.
+                        console.warn("[Status] Play requested but playlist is empty — refetching");
+                        fetchPlaylist();
                     }
-                } else if (s.state === "playing" && serverState === "paused") {
+                } else if (s.state === "playing" && prevState === "paused") {
                     if (showingChart) {
                         if (!chartDismissTimer) {
                             chartDismissTimer = setTimeout(resumeAfterChart, chartDuration * 1000);
@@ -247,7 +275,7 @@
                             startVideoPlayback(0);
                         }
                     }
-                } else if (s.state === "paused" && serverState !== "paused") {
+                } else if (s.state === "paused" && prevState !== "paused") {
                     if (showingChart) {
                         if (chartDismissTimer) {
                             clearTimeout(chartDismissTimer);
@@ -258,8 +286,6 @@
                         else { player.pause(); }
                     }
                 }
-
-                serverState = s.state;
             })
             .catch(err => {
                 console.error("[Status] Poll failed:", err);
@@ -585,6 +611,24 @@
         } else if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
             recoverFromMediaFailure("no playback progress for 15 seconds");
         }
+    }, 5000);
+
+    // A splash screen while the server reports "playing" is a dead end: it
+    // tells the operator to press Play, but the server already thinks it is
+    // playing, so no state transition will ever arrive to start the rotation.
+    // Whatever caused it — a missed transition, a failed first start, a stale
+    // cached script — recover instead of waiting for someone to notice.
+    setInterval(function () {
+        if (serverState !== "playing" || showingChart) return;
+        if (playlist.length === 0) return;
+        if (recoveryTimer) return;
+        // The splash is only ever visible when nothing is being shown, so this
+        // cannot fire over a video that is merely buffering.
+        if (splash.style.display === "none") return;
+
+        console.warn("[Watchdog] Server is playing but the splash is up — starting playback");
+        if (currentIndex === -1) currentIndex = 0;
+        playCurrentVideo();
     }, 5000);
 
     // ---- Init & polling ---------------------------------------------------

@@ -83,8 +83,12 @@
         fetch("/api/status")
             .then(r => r.json())
             .then(s => {
-                const video = s.current_video || "Stopped";
-                nowLabel.textContent = video;
+                // "Stopped" while the state badge reads "playing" is a
+                // contradiction. No reported video during playback means the
+                // display has not started yet, not that playback is stopped.
+                nowLabel.textContent = s.current_video
+                    || (s.state === "playing" ? "Waiting for display…"
+                        : s.state === "paused" ? "Paused" : "Stopped");
 
                 nowState.textContent = s.state;
                 nowState.className = "badge ms-2 bg-"
@@ -492,7 +496,19 @@
         post("/api/launch-display")
             .then(r => {
                 if (!r.ok) throw new Error();
-                showToast("Display launched on Monitor " + (parseInt(setDisplayMonitor.value, 10) + 1), "success");
+                return r.json().catch(() => ({}));
+            })
+            .then(data => {
+                const monitor = parseInt(setDisplayMonitor.value, 10) + 1;
+                const at = (data && typeof data.x === "number")
+                    ? " at " + data.x + "," + data.y : "";
+                if (data && data.result === "already-running") {
+                    // The window was left where it already was, so don't claim
+                    // it just appeared on the selected monitor.
+                    showToast("Signage browser was already open — left in place", "warning");
+                } else {
+                    showToast("Display launched on Monitor " + monitor + at, "success");
+                }
                 btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Launched!';
                 setTimeout(() => {
                     btn.innerHTML = '<i class="bi bi-box-arrow-up-right me-1"></i>Launch Display';

@@ -62,7 +62,9 @@ from flask import (
 from waitress import serve
 
 from utils.price_fetcher import fetch_and_store, get_failure_status
-from utils.system_utils import launch_chrome_kiosk
+from utils.system_utils import (
+    ALREADY_RUNNING, FAILED, LAUNCHED, launch_chrome_kiosk,
+)
 
 try:
     from screeninfo import get_monitors
@@ -592,34 +594,79 @@ def api_settings_update():
 def api_launch_display():
     port = config.get('flask_port', 5000)
 
-    if launch_saved_display(port):
-        return jsonify({'status': 'ok'})
-    return jsonify({'error': 'failed to launch browser'}), 500
+    # Pressing the button is an explicit request for a window on the selected
+    # monitor, so any existing signage browser is closed and reopened. Reporting
+    # "ok" while silently leaving an old window where it was is what made a
+    # misplaced display look like a successful launch.
+    result, (x, y) = launch_saved_display(port, force=True)
+
+    if result == FAILED:
+        return jsonify({'error': 'failed to launch browser'}), 500
+    # The position is echoed back so a window opened into empty coordinate
+    # space is visible as a number in the admin panel rather than a mystery.
+    return jsonify({'status': 'ok', 'result': result, 'x': x, 'y': y})
 
 
-def launch_saved_display(port):
+def launch_saved_display(port, force=False):
     """Launch the display using the monitor currently selected in settings."""
 
     # Look up selected monitor's position
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key = 'display_monitor'").fetchone()
     conn.close()
-    monitor_idx = int(row['value']) if row else 1
+    try:
+        monitor_idx = int(row['value']) if row else 1
+    except (TypeError, ValueError):
+        monitor_idx = 1
 
-    monitors = _get_monitor_list()
-    if monitors and 0 <= monitor_idx < len(monitors):
-        m = monitors[monitor_idx]
-        offset_x, offset_y = m['x'], m['y']
-    else:
-        # Fallback: assume second monitor is to the right
-        offset_x, offset_y = 1920, 0
+    offset_x, offset_y, width, height = resolve_display_position(monitor_idx)
 
-    return launch_chrome_kiosk(
+    result = launch_chrome_kiosk(
         port,
         offset_x,
         offset_y,
         profile_dir=BROWSER_PROFILE_DIR,
+        width=width,
+        height=height,
+        force=force,
     )
+    return result, (offset_x, offset_y)
+
+
+def resolve_display_position(monitor_idx):
+    """Return (x, y, width, height) for the monitor to open the display on.
+
+    Never returns coordinates that fall outside every detected monitor. A
+    window placed in empty coordinate space still exists and still shows in the
+    taskbar, but is invisible on every physical screen and cannot be dragged
+    back — so an unverifiable position is always rejected in favour of one the
+    operator can actually see.
+    """
+    monitors = _get_monitor_list()
+
+    if not monitors:
+        # Detection is unavailable (screeninfo missing or failing). 0,0 is the
+        # only coordinate guaranteed to sit on a physical screen. The old
+        # 1920,0 guess assumed a 1920-wide primary with a second monitor to its
+        # right; on any other layout it opened the window into the void.
+        logger.warning(
+            'Monitor detection unavailable — opening the display at 0,0 on the '
+            'primary screen. Select the correct monitor in the admin panel.')
+        return 0, 0, None, None
+
+    if not 0 <= monitor_idx < len(monitors):
+        m = monitors[0]
+        logger.warning(
+            'Saved monitor index %s is out of range (%s monitor(s) detected) — '
+            'opening on monitor 1 at %s,%s instead',
+            monitor_idx, len(monitors), m['x'], m['y'])
+        return m['x'], m['y'], m['width'], m['height']
+
+    m = monitors[monitor_idx]
+    logger.info(
+        'Display target: monitor %s (%s) at %s,%s size %sx%s',
+        monitor_idx + 1, m['name'], m['x'], m['y'], m['width'], m['height'])
+    return m['x'], m['y'], m['width'], m['height']
 
 # --- API: Status & Control -------------------------------------------------
 _start_time = time.time()
@@ -773,7 +820,15 @@ def auto_launch_when_ready(port):
     ).fetchone()
     conn.close()
     if row and row['value'] == 'true':
-        launch_saved_display(port)
+        # Automatic start-up leaves a healthy browser alone; only the admin
+        # button forces a relaunch.
+        result, _position = launch_saved_display(port)
+        if result == LAUNCHED:
+            logger.info('Display launched automatically')
+        elif result == ALREADY_RUNNING:
+            logger.info('Display already running; left in place')
+        else:
+            logger.error('Automatic display launch failed')
 
 # ---------------------------------------------------------------------------
 # Entry point

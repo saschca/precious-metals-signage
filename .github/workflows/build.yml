@@ -20,6 +20,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: node --check static/js/display.js
       - run: node --check static/js/admin.js
+      - run: node tests/test_display_state.js
 
   build-windows:
     needs: test
@@ -66,4 +67,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $Version = (Get-Content VERSION).Trim()
-          gh release create "v$Version" "PreciousMetalsSignage-v$Version-windows.zip" --generate-notes --title "Precious Metals Signage v$Version"
+          $Tag = '${{ github.ref_name }}'
+          $Zip = "PreciousMetalsSignage-v$Version-windows.zip"
+
+          if ($Tag -ne "v$Version") {
+            Write-Warning "Tag $Tag does not match VERSION $Version - publishing under $Tag"
+          }
+
+          # A release created from the GitHub web UI creates the tag itself,
+          # which triggers this run with the release already in place. Creating
+          # it again fails, so attach the build to the existing release instead.
+          # Publishing must not depend on which way the tag was made.
+          $PSNativeCommandUseErrorActionPreference = $false
+          gh release view $Tag *> $null
+          $Exists = ($LASTEXITCODE -eq 0)
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          if ($Exists) {
+            Write-Host "Release $Tag already exists - uploading $Zip to it"
+            gh release upload $Tag $Zip --clobber
+          } else {
+            Write-Host "Creating release $Tag"
+            gh release create $Tag $Zip --generate-notes --title "Precious Metals Signage $Tag"
+          }
