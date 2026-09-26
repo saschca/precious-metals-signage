@@ -2,8 +2,17 @@
 
 Free, self-hosted digital signage system for precious metals shops. Video loop + live price ticker + price charts. Zero API costs.
 
-<!-- ![Screenshot](docs/screenshot.png) -->
-*Screenshot coming soon*
+## In Action
+
+Running in a real showroom: a TV on the shop floor shows the signage, while a counter monitor runs the admin panel.
+
+| Showroom TV — gold price chart slide | Showroom TV — video with live ticker |
+|---|---|
+| ![Showroom TV showing the 1-week gold price chart in CAD](docs/screenshots/showroom-tv-gold-chart.jpg) | ![Showroom TV playing a coin video with the gold/silver/platinum ticker](docs/screenshots/showroom-tv-video-ticker.jpg) |
+
+| Admin panel — playlist & current prices | Admin panel — settings & system log |
+|---|---|
+| ![Admin panel with Now Playing, playlist and current CAD prices](docs/screenshots/admin-panel-playlist-prices.jpg) | ![Admin panel settings for ticker, chart slides, display and recent logs](docs/screenshots/admin-panel-settings-log.jpg) |
 
 ---
 
