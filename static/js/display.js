@@ -733,6 +733,19 @@
         }
 
         tickerUpdated.textContent = "Last updated: " + fmtTime(fetchedAt);
+        fitTicker();
+    }
+
+    // Static mode: shrink the text until every metal fits next to the
+    // "Last updated" label (4 metals at 28px overflow a 1920px screen).
+    function fitTicker() {
+        tickerContent.style.fontSize = "";
+        if (tickerMode !== "static" || !tickerContent.clientWidth) return;
+        var size = parseFloat(getComputedStyle(tickerContent).fontSize);
+        while (tickerContent.scrollWidth > tickerContent.clientWidth && size > 14) {
+            size -= 1;
+            tickerContent.style.fontSize = size + "px";
+        }
     }
 
     // ---- Fetch prices -----------------------------------------------------
@@ -773,6 +786,7 @@
                     ticker.style.display = "none";
                 } else {
                     ticker.style.display = "flex";
+                    fitTicker();
                 }
             })
             .catch(() => {});
@@ -781,12 +795,14 @@
     function applyMode() {
         ticker.classList.remove("mode-static", "mode-marquee");
         ticker.classList.add("mode-" + tickerMode);
+        fitTicker();
     }
 
     // ---- Init & polling ---------------------------------------------------
     applyMode();
     fetchSettings();
     fetchPrices();
+    window.addEventListener("resize", fitTicker);
     setInterval(fetchPrices, 60000);
     setInterval(fetchSettings, 30000);
 })();
