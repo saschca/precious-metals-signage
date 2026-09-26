@@ -110,6 +110,7 @@ html, body {
     min-width: 0;
     height: 100%;
     white-space: nowrap;
+    overflow: hidden;
 }
 
 #ticker-updated {
@@ -173,6 +174,7 @@ html, body {
 #ticker.mode-marquee #ticker-content {
     display: inline-flex;
     flex: none;
+    overflow: visible;
     animation: marquee-scroll var(--marquee-duration, 30s) linear infinite;
     padding-left: 0;
 }

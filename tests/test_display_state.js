@@ -83,6 +83,7 @@ function createHarness(options) {
             addEventListener() {},
             removeEventListener() {},
         },
+        addEventListener() {},
         fetch(url) {
             if (url.startsWith("/api/status")) return respond(state.status);
             if (url.startsWith("/api/playlist")) return respond(state.playlist);
